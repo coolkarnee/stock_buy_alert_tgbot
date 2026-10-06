@@ -9,7 +9,6 @@ def send(message):
     if not settings.TELEGRAM_BOT_TOKEN or not settings.TELEGRAM_CHAT_ID:
         print(message)
         return
-
     for chat_id in _chat_ids():
         try:
             r = requests.post(

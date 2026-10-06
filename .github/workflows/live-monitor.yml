@@ -1,0 +1,35 @@
+name: Intraday Live Monitor
+
+on:
+  schedule:
+    # Runs at 03:45 UTC (09:15 AM IST) Monday through Friday
+    - cron: '45 3 * * 1-5'
+  workflow_dispatch: # Allows you to manually trigger it for testing
+
+jobs:
+  run-live-monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360 # Forces the runner to stop after 6 hours at 3:15 PM IST
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Live Monitor
+        env:
+          UPSTOX_ACCESS_TOKEN: ${{ secrets.UPSTOX_ACCESS_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python live_monitor.py

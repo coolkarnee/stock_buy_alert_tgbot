@@ -1,58 +1,57 @@
 # Stock Pattern Lab - Live Intraday Monitor
 
-An NSE equity alerting tool that connects to the Upstox V3 full-market WebSocket to monitor live intraday momentum breakouts. It screens stocks in real-time and sends Telegram alerts when specific technical conditions are met. This repository is an alert-only scanner. It does not place orders, manage positions, or implement defense and exit rules.
+An automated NSE equity screening and alerting tool. This repository is a Python port of the **Momentum Alert Pro (Pine Script v6)** institutional screener. It connects to the Upstox V3 full-market WebSocket to monitor live intraday momentum breakouts across the entire NSE equity universe, dispatching TradingView-formatted alerts directly to Telegram.
 
-## System Architecture & File Dependencies
+This repository is an alert-only scanner. It does not place orders or manage broker positions. 
 
-The codebase is strictly modular, separating API communication, signal logic, and execution orchestration.
+## System Architecture
 
-| File | Primary Responsibility | Dependencies |
-| :--- | :--- | :--- |
-| **`live_monitor.py`** | Main entry point. Manages the WebSocket lifecycle, background threads, and orchestrates the live evaluation loop. | `config.settings`, `scanner.live_engine`, `scanner.live_data`, `scanner.universe`, `scanner.upstox`, `scanner.alerts`. |
-| **`scanner/live_engine.py`** | The core logic engine. Builds the historical reference state for each stock, processes 1m candles for opening ranges, and evaluates live ticks against BUY rules. | `config.settings`, `scanner.indicators`. |
-| **`scanner/live_data.py`** | Fetches supplementary intraday data (1-minute candles for ORB) and Yahoo Finance total market capitalization. | `scanner.upstox`, `yfinance`. |
-| **`scanner/upstox.py`** | Handles Upstox API communication, including instrument master lookups, rate limiting, and multi-threaded historical daily candle downloads. | `config.settings`. |
-| **`scanner/universe.py`** | Dynamically builds the stock universe by downloading Nifty constituent CSVs and the NSE IPO tracker. | External HTTP requests only. |
-| **`scanner/indicators.py`** | Provides mathematical utility functions for Exponential Moving Averages (EMA) and Average True Range (ATR). | `pandas`. |
-| **`scanner/alerts.py`** | Handles HTTP POST requests to the Telegram Bot API to dispatch BUY alerts. | `config.settings`, `requests`. |
-| **`config/settings.py`** | Centralized configuration holding environment variables, API keys, and hardcoded technical thresholds. | `os`. |
-| **`performance.py`** | After-market evaluation script that checks the closing prices of alerted stocks to calculate the alert-to-close percentage move. | `scanner.alerts`, `scanner.upstox`. |
+The engine asynchronously evaluates three distinct categories on every live market tick:
 
-## Execution Flow & Sequence of Calls
+### 1. Momentum Buy (Core Screener)
+Triggers when all strict momentum and volume conditions align during the intraday session:
+* **Trend:** Price > developing daily 21 EMA. (IPOs <= 21 days old auto-pass).
+* **Momentum:** Price > Previous Close (Green Day).
+* **Breakout:** Price crosses min(Previous High, Previous Close) + 0.5% buffer.
+* **Intraday ORB:** Live price clears the high of at least one completed Opening Range (3m, 5m, 15m, 30m, or 60m).
+* **Volume Surge:** Requires 1 of 4: RVOL > 1.3x, Pocket Pivot, 1st 30m Vol Surge, or Absolute Vol > 9M.
+* **Volatility & Strength:** 14-Day ATR > 3.9%, and Rally >= 30% from 52W Low (IPOs auto-pass).
+* **Proximity:** Within 20% of 52W High (or 15% of listing high for IPOs).
+* **Liquidity:** Daily Turnover (Price × Volume) > ₹20 Cr and Price > ₹20.
 
-When you run `python live_monitor.py`, the program executes in three distinct phases:
+### 2. Independent Radars (Trend-Filtered)
+Tracks milestones only if the stock is in an uptrend (Close > 21 EMA):
+* **Gap Up:** Fires on the opening tick if Open is >= 5% above Previous Close.
+* **New Highs:** Alerts on new 1M, 3M, 6M, or 52W highs.
+* **Performance Milestones:** Exact-day crossovers of high returns (1W>19%, 1M>20%, 3M>30%, 6M>50%, 1Y>100%).
 
-### Phase 1: Pre-Market Initialization (State Building)
-1. **Universe Loading:** `live_monitor.run()` calls `load_nse_equities()`, which delegates to `universe.py` to scrape Nifty indices and recent IPOs. It maps these symbols to Upstox instrument keys.
-2. **Historical Data Fetching:** `historical_many()` executes a ThreadPool to download ~2 years of daily historical candles for every eligible stock. 
-3. **Reference State Construction:** For each stock, `live_engine.build_state()` is called. It calculates historical baseline metrics (EMA21, ATR14, 52-week high/low, prior true ranges, and average volume) and stores them in a memory dictionary to minimize live-tick calculation overhead.
+### 3. Trade Management (Time-Gated Sells)
+If enabled, runs only between 15:15 and 15:30 IST to evaluate moving average violations on a daily closing basis:
+* **Stop Loss (S-EDL):** Live price drops below the Entry Day's Low.
+* **Phase 1 Exit (IPO Days 1-10):** Closes below the lowest low of the prior 3 days (S-3DL).
+* **Phase 2 Exit (IPO Days 11-21):** Closes below the 10 EMA (S-10E).
+* **Phase 3 Exit (Standard Days 22+):** Closes below the 21 EMA (S-21E).
 
-### Phase 2: Live Market Monitoring
-1. **WebSocket Connection:** At 09:15 IST, the Upstox `MarketDataStreamerV3` connects and subscribes to all eligible instrument keys.
-2. **Tick Ingestion:** As data flows in, the `on_message` callback uses `extract_quote()` to parse the tick and update a thread-safe dictionary.
-3. **Evaluation Loop:** A continuous loop runs every 1 second until 15:20 IST:
-   * It iterates through the latest quotes.
-   * It calls `live_engine.evaluate(state, quote)` for each stock.
-   * The engine dynamically updates the daily developing EMA and ATR with the live tick.
-   * The engine checks all momentum rules. 
-4. **Intraday Data Injection:** If a stock passes all preliminary checks but lacks its Opening Range Breakout (ORB) levels, the monitor pushes a task to a background thread pool to fetch 1-minute intraday candles via `live_data.intraday_minutes()`. Once fetched, `live_engine.update_intraday()` calculates the 3m, 5m, 15m, 30m, and 60m high levels and injects them into the state.
-5. **Alert Dispatch:** If `evaluate()` returns a definitive `buy` flag, the symbol is added to a local set to prevent duplicate alerts, logged to `live_alerts.csv`, and sent to Telegram via `alerts.send()`.
+## Repository Map
 
-### Phase 3: Session End
-1. At 15:20 IST, the evaluation loop terminates, the thread pool shuts down, and the WebSocket gracefully disconnects. 
-2. A final summary message is sent to Telegram.
+| File | Primary Responsibility |
+| :--- | :--- |
+| **`live_monitor.py`** | Main entry point. Manages the WebSocket lifecycle, quote ingestion, and alert dispatch. |
+| **`scanner/live_engine.py`** | The core state machine. Calculates historical baselines, updates ORB, and evaluates tick logic. |
+| **`scanner/upstox.py`** | Handles API authentication, rate limiting, historical downloads, and builds the full NSE EQ universe. |
+| **`scanner/live_data.py`** | Fetches 1-minute intraday candles to construct Opening Range breakouts. |
+| **`scanner/indicators.py`** | Mathematical utility functions for EMA and ATR calculations. |
+| **`scanner/alerts.py`** | Telegram HTTP POST dispatcher. |
+| **`config/settings.py`** | Centralized configuration for API keys, thresholds, and module toggles. |
+| **`test_live_engine.py`** | Offline regression test suite for core buy, sell, and radar logic. |
+| **`test_upstox.py`** | Offline regression test suite for universe extraction filtering. |
+| **`.github/workflows/live-monitor.yml`** | Automated GitHub Actions execution schedule. |
 
-## Live Momentum BUY Conditions
+## Execution Flow
 
-An alert is strictly generated when **all** of the following evaluate to true during the live session:
-* **Trend:** Price > developing daily EMA21 (IPOs < 21 days old auto-pass).
-* **Momentum:** Price > Previous Close.
-* **Breakout:** Price > min(Previous High, Previous Close) + 0.5% buffer.
-* **Opening Range:** Price > at least one completed time-window high (3m, 5m, 15m, 30m, or 60m).
-* **Volume Surge:** Projected RVOL > 1.3x, OR a Pocket Pivot occurs, OR First 30m volume > 10-day average daily volume.
-* **Volatility:** Developing ATR14 > 3.9% of price (IPOs auto-pass).
-* **Strength & Proximity:** Stock is >= 30% above its 52-week low and <= 20% below its 52-week high (IPOs use 15% from listing high).
-* **Liquidity:** Traded turnover > ₹30 Crores, total market cap > ₹1,000 Crores, and price > ₹20.
+1. **Pre-Market State Building (09:05 IST):** The script fetches the entire active NSE Equity universe directly from Upstox (~2,400 symbols). It uses a thread pool to download up to 2 years of daily history for each stock, calculating reference baselines (EMA, ATR, Prior Lows, Volume averages) to keep the live loop lightweight.
+2. **Live Monitoring (09:15 to 15:20 IST):** Connects to the Upstox `MarketDataStreamerV3`. For every tick, it updates developing daily metrics and evaluates the Momentum, Radar, and Exit rules. Missing ORB data triggers asynchronous 1-minute candle fetches.
+3. **Dispatch:** Alerts are logged locally to `live_alerts.csv` and sent immediately via Telegram to prevent duplicate firing.
 
 ## Setup & Configuration
 
@@ -61,27 +60,19 @@ An alert is strictly generated when **all** of the following evaluate to true du
 * Install dependencies: `python -m pip install -r requirements.txt`
 
 **2. Environment Variables**
-Configure these in your shell or workflow environment:
-* `UPSTOX_ACCESS_TOKEN`: Required to fetch Upstox historical data and connect the live WebSocket.
-* `TELEGRAM_BOT_TOKEN`: Required for sending Telegram alerts.
-* `TELEGRAM_CHAT_ID`: The destination chat ID(s). (May contain comma-separated IDs).
-*(If Telegram variables are missing, alerts will print to standard output).*
+Configure these in your shell or GitHub Actions repository secrets:
+* `UPSTOX_ACCESS_TOKEN`: Your 1-Year Upstox Analytics Token.
+* `TELEGRAM_BOT_TOKEN`: Provided by @BotFather.
+* `TELEGRAM_CHAT_ID`: Your target user ID or group ID.
+
+*(Note: Toggles for Radars, Trade Exits, and Momentum filters are located in `config/settings.py`)*
 
 **3. Execution Commands**
 Run one of the following scripts from the repository root:
 ```powershell
-# Start the intraday live monitor (must run during NSE market hours)
+# Start the intraday live monitor (requires market hours)
 python live_monitor.py
 
-# Manually verify Telegram connectivity
-python test_telegram.py
-
-# Evaluate intraday alert performance (run after 15:30 IST)
-python performance.py
-```
-
-**4. Testing**
-Run the offline regression suite for the live engine to verify momentum logic without contacting Upstox or Telegram:
-```powershell
+# Run unit tests to verify signal logic locally
 python -m unittest test_live_engine -v
-```
+python -m unittest test_upstox -v

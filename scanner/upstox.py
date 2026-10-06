@@ -60,19 +60,21 @@ def load_instruments():
     return json.loads(gzip.decompress(r.content))
 
 def load_nse_equities():
-    # Universe is the union of the requested NSE broad-market indices plus
-    # all NSE IPO listings from 2026-01-01 onward.
-    from scanner.universe import load_requested_universe
-    symbols = load_requested_universe()
-
+    print("Fetching entire active NSE Equity universe from Upstox...")
     data = load_instruments()
-    instrument_map = {
-        x.get('trading_symbol'): x.get('instrument_key')
-        for x in data
-        if x.get('segment') == 'NSE_EQ'
-        and x.get('instrument_type') == 'EQ'
-        and x.get('security_type', 'NORMAL') == 'NORMAL'
-    }
+    rows = []
+    
+    for x in data:
+        # Filter strictly for active NSE Equities (excludes futures, options, and indices)
+        if x.get('segment') == 'NSE_EQ' and x.get('instrument_type') == 'EQ' and x.get('security_type', 'NORMAL') == 'NORMAL':
+            rows.append({
+                'instrument_key': x.get('instrument_key'),
+                'trading_symbol': x.get('trading_symbol')
+            })
+            
+    universe = pd.DataFrame(rows).drop_duplicates('instrument_key').reset_index(drop=True)
+    print(f"Total Upstox NSE Equities loaded: {len(universe)}")
+    return universe
 
     rows = [
         {'instrument_key': instrument_map[s], 'trading_symbol': s}

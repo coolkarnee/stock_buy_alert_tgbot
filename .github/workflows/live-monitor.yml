@@ -2,8 +2,8 @@ name: Intraday Live Monitor
 
 on:
   schedule:
-    # Runs at 03:45 UTC (09:15 AM IST) Monday through Friday
-    - cron: '45 3 * * 1-5'
+    # Runs at 03:35 UTC (09:05 AM IST) Monday through Friday
+    - cron: '35 3 * * 1-5'
   workflow_dispatch: # Allows you to manually trigger it for testing
 
 jobs:

@@ -113,10 +113,11 @@ def run():
 
     def on_open():
         print(f"WebSocket connected; subscribed to {len(keys)} instruments.")
-    def on_error(message):
-        print(f"WebSocket error: {message}")
-    def on_close(message):
-        print(f"WebSocket closed: {message}")
+    def on_error(*args):
+        print(f"WebSocket error: {args}")
+    def on_close(*args):
+        print(f"WebSocket closed: {args}")
+
     def on_message(message):
         raw = as_dict(message)
         for instrument_key, feed in (raw.get("feeds") or {}).items():

@@ -23,6 +23,3 @@ def send(message):
         except Exception as exc:
             print(f"Telegram send failed for chat_id={chat_id}: {exc}")
             continue
-
-def format_result(r,state):
-    return f"{state} | {r['symbol']}\nPrice ₹{r['price']:.2f} | Score {r['score']}/7\nPivot ₹{r['pivot']:.2f} | ATR {r['atr_pct']:.1f}%\nRS20 {r['rs20']:.1f}% | 52W distance {r['from_52w_high']:.1f}%\nSwing {r['swing_return']:.1f}% | RVOL {r['rvol']:.1f}x\nVCP={r['vcp']} | Breakout={r['vcp_breakout']} | Pocket Pivot={r['pocket_pivot']}"

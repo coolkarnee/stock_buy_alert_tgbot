@@ -1,4 +1,5 @@
 import pandas as pd
+import requests
 import upstox_client
 from config import settings
 from datetime import datetime, timedelta
@@ -10,6 +11,20 @@ def get_client():
     configuration = upstox_client.Configuration()
     configuration.access_token = settings.UPSTOX_ACCESS_TOKEN
     return upstox_client.ApiClient(configuration)
+
+def _request_json(endpoint, params=None):
+    headers = {
+        "Accept": "application/json",
+        "Authorization": f"Bearer {settings.UPSTOX_ACCESS_TOKEN}"
+    }
+    url = f"{BASE}{endpoint}"
+    try:
+        response = requests.get(url, headers=headers, params=params, timeout=settings.UPSTOX_REQUEST_TIMEOUT)
+        if response.status_code == 200:
+            return response.json().get("data", {})
+    except Exception as exc:
+        print(f"Upstox API request failed for {endpoint}: {exc}")
+    return {}
 
 def load_instruments():
     api_instance = upstox_client.InstrumentCsvApi(get_client())

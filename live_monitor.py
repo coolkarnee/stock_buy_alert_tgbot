@@ -199,10 +199,14 @@ def run():
                     continue
 
                 eligible = all(passed for name, passed in result["checks"].items() if name not in {"orb", "volume_surge"})
-                needs_data = len(state["orb_highs"]) < 5
+                
+                # Check against 4 windows instead of 5 (since we removed 3m)
+                needs_data = len(state["orb_highs"]) < 4 
+                
+                # Increased API cooldown from 60 seconds to 300 seconds (5 minutes) to respect rate limits
                 if eligible and needs_data and instrument_key not in pending and time.monotonic() >= next_refresh.get(instrument_key, 0):
                     pending[instrument_key] = pool.submit(fetch_signal_data, instrument_key)
-                    next_refresh[instrument_key] = time.monotonic() + 60
+                    next_refresh[instrument_key] = time.monotonic() + 300
 
             now_ts = time.time()
             if now_ts - last_log >= 60:

@@ -1,11 +1,12 @@
 from datetime import datetime, time as dtime
 from zoneinfo import ZoneInfo
 import pandas as pd
+
 from config import settings
 from scanner.indicators import ema
 
 IST = ZoneInfo("Asia/Kolkata")
-ORB_WINDOWS = (3, 5, 15, 30, 60)
+ORB_WINDOWS = (5, 15, 30, 60)
 
 def _completed(df):
     if df.empty:
@@ -19,7 +20,7 @@ def build_state(symbol, df, nifty_df):
     history = _completed(df)
     if history.empty:
         return None
-    
+        
     previous = history.iloc[-1]
     previous_close = history.close.shift(1)
     true_ranges = pd.concat([
@@ -97,6 +98,7 @@ def update_intraday(state, candles, now=None):
     start = datetime.combine(now.date(), dtime(9, 15), tzinfo=IST)
     bars = candles.copy()
     if bars.empty: return
+
     bars["timestamp"] = pd.to_datetime(bars["timestamp"], utc=True).dt.tz_convert(IST)
     bars = bars[(bars.timestamp >= start) & (bars.timestamp + pd.Timedelta(minutes=1) <= now)]
     bars = bars.drop_duplicates("timestamp").sort_values("timestamp")
@@ -194,7 +196,9 @@ def evaluate(state, quote, market_context):
     # --- Independent Radars ---
     radar_allowed = is_ipo or price > current_ema21
     gap_pct = (day_open - state["prev_close"]) / state["prev_close"] * 100 if state["prev_close"] > 0 else 0
-    trigger_gap = radar_allowed and getattr(settings, "ALERT_GAP_UP", True) and gap_pct >= 5.0
+    
+    # Updated Gap Up Alert Logic
+    trigger_gap = getattr(settings, "ALERT_GAP_UP", True) and (gap_pct > 5.0) and (turnover_cr > 20.0) and (price > current_ema21) and (price > 20.0)
     
     highMsg = None
     if day_high > state["year_high"]: highMsg = "New 52-Week High"
@@ -219,7 +223,7 @@ def evaluate(state, quote, market_context):
         trail_21 = (traded_days > 21) and (price < current_ema21)
         trail_10 = (traded_days > 10 and traded_days <= 21) and (price < current_ema10)
         trail_3L = (traded_days <= 10) and (price < state["lowest_3d_low"])
-
+        
         if trail_21: trigger_sell = "SELL-21EMA"
         elif trail_10: trigger_sell = "SELL-10EMA"
         elif trail_3L: trigger_sell = "SELL-3DL"
@@ -234,7 +238,6 @@ def evaluate(state, quote, market_context):
     isBullMarket = (idxC > idxE21) and (idxE10 > idxE21) and (idxE10 > prev_idxE10)
     isBearMarket = (idxC < idxE21) and (idxE10 < idxE21) and (idxE10 < prev_idxE10)
     ctxMsg = f" | Market: {'Bull Market' if isBullMarket else ('Bear Market' if isBearMarket else 'Choppy Market')}"
-
     alert_type = ""
     alertMsg = ""
     ticker = f"NSE:{state['symbol']}"
@@ -245,7 +248,6 @@ def evaluate(state, quote, market_context):
         elif 30 in orb_windows: rawOrbMsg = "Broke 30m ORB"
         elif 15 in orb_windows: rawOrbMsg = "Broke 15m ORB"
         elif 5 in orb_windows: rawOrbMsg = "Broke 5m ORB"
-        elif 3 in orb_windows: rawOrbMsg = "Broke 3m ORB"
         
         alertMsg = f"{ticker} BUY | Entry: {price:.2f} | SL: {day_low:.2f} | {rawOrbMsg}{ctxMsg}"
         if stockStrongMomo and idxStrongMomo: alertMsg += " | Strong Momo (Stk+Idx)"

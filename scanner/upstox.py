@@ -1,5 +1,6 @@
 import pandas as pd
 import requests
+import time
 from config import settings
 from datetime import datetime, timedelta
 import concurrent.futures
@@ -7,7 +8,6 @@ import concurrent.futures
 BASE = "https://api.upstox.com/v2"
 
 def _request_json(endpoint, params=None):
-    """Direct HTTP request handler to avoid SDK version conflicts."""
     headers = {
         "Accept": "application/json",
         "Authorization": f"Bearer {settings.UPSTOX_ACCESS_TOKEN}"
@@ -22,14 +22,9 @@ def _request_json(endpoint, params=None):
     return {}
 
 def load_instruments():
-    """
-    Downloads the official Upstox Instrument Master CSV directly.
-    """
     try:
         url = "https://assets.upstox.com/market-quote/instruments/exchange/NSE.csv.gz"
         df = pd.read_csv(url)
-        
-        # Normalize the raw CSV column names to match what the rest of the application expects
         df = df.rename(columns={
             'tradingsymbol': 'trading_symbol',
             'exchange': 'segment'
@@ -47,20 +42,21 @@ def load_nse_equities():
     for x in data:
         segment = str(x.get('segment', ''))
         inst_type = str(x.get('instrument_type', ''))
+        # Standardize lot size string to check for standard retail equities
+        lot_size = str(x.get('lot_size', '1')).split('.')[0]
         
-        # The raw CSV uses 'EQUITY', but we also check 'EQ' just in case of future Upstox API changes
-        if segment == 'NSE_EQ' and inst_type in ['EQUITY', 'EQ']:
+        # Filter for standard equities (Lot size 1 drops SME stocks and bonds)
+        if segment == 'NSE_EQ' and inst_type in ['EQUITY', 'EQ'] and lot_size == '1':
             rows.append({
                 'instrument_key': x.get('instrument_key'),
                 'trading_symbol': x.get('trading_symbol')
             })
             
     universe = pd.DataFrame(rows).drop_duplicates('instrument_key').reset_index(drop=True)
-    print(f"Total filtered NSE Equities loaded: {len(universe)}")
+    print(f"Total filtered standard NSE Equities loaded: {len(universe)}")
     return universe
 
 def historical_daily(instrument_key, years=1):
-    """Fetches historical candles via direct HTTP request."""
     to_date = datetime.now().strftime("%Y-%m-%d")
     from_date = (datetime.now() - timedelta(days=years * 365)).strftime("%Y-%m-%d")
     
@@ -71,26 +67,33 @@ def historical_daily(instrument_key, years=1):
     }
     url = f"{BASE}{endpoint}"
     
-    try:
-        response = requests.get(url, headers=headers, timeout=15)
-        if response.status_code == 200:
-            data = response.json().get("data", {}).get("candles", [])
-            if not data:
-                return pd.DataFrame()
+    # Retry mechanism to handle Upstox 429 Rate Limits
+    for attempt in range(5):
+        try:
+            response = requests.get(url, headers=headers, timeout=15)
+            if response.status_code == 200:
+                data = response.json().get("data", {}).get("candles", [])
+                if not data: return pd.DataFrame()
                 
-            df = pd.DataFrame(data, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume', 'oi'])
-            df['timestamp'] = pd.to_datetime(df['timestamp'])
-            df = df.sort_values('timestamp').reset_index(drop=True)
-            return df
-    except Exception as exc:
-        pass
-    
+                df = pd.DataFrame(data, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume', 'oi'])
+                df['timestamp'] = pd.to_datetime(df['timestamp'])
+                df = df.sort_values('timestamp').reset_index(drop=True)
+                return df
+            elif response.status_code == 429: # Rate Limited!
+                time.sleep(2) # Wait 2 seconds and try again
+                continue
+            else:
+                break
+        except Exception:
+            time.sleep(1)
+            continue
+            
     return pd.DataFrame()
 
-def historical_many(universe, years=1, max_workers=8):
+def historical_many(universe, years=1, max_workers=5):
     results = {}
-    # Increased max_workers to 12 to speed up cloud processing
-    with concurrent.futures.ThreadPoolExecutor(max_workers=12) as executor:
+    # Lowered max_workers to 5 to pace requests below Upstox limits
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_symbol = {
             executor.submit(historical_daily, row.instrument_key, years): row
             for _, row in universe.iterrows()

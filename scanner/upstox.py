@@ -23,14 +23,17 @@ def _request_json(endpoint, params=None):
 
 def load_instruments():
     """
-    Downloads the official Upstox Instrument Master CSV directly, 
-    bypassing the buggy upstox_client SDK entirely.
+    Downloads the official Upstox Instrument Master CSV directly.
     """
     try:
         url = "https://assets.upstox.com/market-quote/instruments/exchange/NSE.csv.gz"
         df = pd.read_csv(url)
-        # Standardize column names to match what the engine expects
-        df = df.rename(columns={'tradingsymbol': 'trading_symbol', 'exchange': 'segment'})
+        
+        # Normalize the raw CSV column names to match what the rest of the application expects
+        df = df.rename(columns={
+            'tradingsymbol': 'trading_symbol',
+            'exchange': 'segment'
+        })
         return df.to_dict('records')
     except Exception as exc:
         print(f"Error loading instrument CSV: {exc}")
@@ -42,12 +45,14 @@ def load_nse_equities():
     rows = []
     
     for x in data:
-        # Filter for standard NSE Equities
-        if x.get('segment') == 'NSE_EQ' and x.get('instrument_type') == 'EQ':
-            symbol = str(x.get('trading_symbol', ''))
+        segment = str(x.get('segment', ''))
+        inst_type = str(x.get('instrument_type', ''))
+        
+        # The raw CSV uses 'EQUITY', but we also check 'EQ' just in case of future Upstox API changes
+        if segment == 'NSE_EQ' and inst_type in ['EQUITY', 'EQ']:
             rows.append({
                 'instrument_key': x.get('instrument_key'),
-                'trading_symbol': symbol
+                'trading_symbol': x.get('trading_symbol')
             })
             
     universe = pd.DataFrame(rows).drop_duplicates('instrument_key').reset_index(drop=True)

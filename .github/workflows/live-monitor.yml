@@ -2,14 +2,13 @@ name: Intraday Live Monitor
 
 on:
   schedule:
-    # Runs at 03:35 UTC (09:05 AM IST) Monday through Friday
-    - cron: '35 3 * * 1-5'
-  workflow_dispatch: # Allows you to manually trigger it for testing
+    # 03:42 UTC equals exactly 09:12 AM IST (Monday to Friday)
+    - cron: '42 3 * * 1-5'
+  workflow_dispatch:
 
 jobs:
   run-live-monitor:
     runs-on: ubuntu-latest
-    timeout-minutes: 360 # Forces the runner to stop after 6 hours at 3:15 PM IST
 
     steps:
       - name: Checkout Repository
@@ -31,5 +30,6 @@ jobs:
           UPSTOX_ACCESS_TOKEN: ${{ secrets.UPSTOX_ACCESS_TOKEN }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          PYTHONUNBUFFERED: "1"
         run: |
           python live_monitor.py

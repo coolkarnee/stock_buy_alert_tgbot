@@ -48,9 +48,11 @@ def market_open_close():
     now = datetime.now(IST)
     start = datetime.combine(now.date(), dtime(9, 15), tzinfo=IST)
     end = datetime.combine(now.date(), dtime(15, 20), tzinfo=IST)
-    return start, end
+    return now, start, end
 
 def run():
+    print(f"Initializing live monitor at {datetime.now(IST).strftime('%Y-%m-%d %H:%M:%S IST')}...")
+    
     alert_log = Path("live_alerts.csv")
     if not alert_log.exists():
         with alert_log.open("w", newline="", encoding="utf-8") as f:
@@ -60,24 +62,26 @@ def run():
     nifty_key = None
     market_context = {"idxC": 0.0, "idxE21": 0.0, "idxE10": 0.0, "prev_idxE10": 0.0}
     b_ema21 = b_ema10 = b_prev_ema10 = None
+    nifty_df = pd.DataFrame()
     
     try:
         nifty_key = find_smallcap250_key()
-        nifty_df = historical_daily(nifty_key, years=2)
-        completed_index = _completed(nifty_df)
-        if len(completed_index) >= 21:
-            idx_close = completed_index.close
-            idxE21_s = ema(idx_close, 21)
-            idxE10_s = ema(idx_close, 10)
-            b_ema21 = float(idxE21_s.iloc[-1])
-            b_ema10 = float(idxE10_s.iloc[-1])
-            b_prev_ema10 = float(idxE10_s.iloc[-2]) if len(idxE10_s) > 1 else b_ema10
-            market_context.update({"idxE21": b_ema21, "idxE10": b_ema10, "prev_idxE10": b_prev_ema10})
+        if nifty_key:
+            nifty_df = historical_daily(nifty_key, years=1)
+            completed_index = _completed(nifty_df)
+            if len(completed_index) >= 21:
+                idx_close = completed_index.close
+                idxE21_s = ema(idx_close, 21)
+                idxE10_s = ema(idx_close, 10)
+                b_ema21 = float(idxE21_s.iloc[-1])
+                b_ema10 = float(idxE10_s.iloc[-1])
+                b_prev_ema10 = float(idxE10_s.iloc[-2]) if len(idxE10_s) > 1 else b_ema10
+                market_context.update({"idxE21": b_ema21, "idxE10": b_ema10, "prev_idxE10": b_prev_ema10})
     except Exception as exc:
         print(f"Smallcap 250 context unavailable: {exc}")
 
-    print(f"Preparing live states for {len(universe)} NSE equities...")
-    data = historical_many(universe, years=2, max_workers=settings.UPSTOX_MAX_WORKERS)
+    print(f"Preparing live states for {len(universe)} NSE equities (1-year baseline seeding)...")
+    data = historical_many(universe, years=1, max_workers=settings.UPSTOX_MAX_WORKERS)
     states = {}
     for _, row in universe.iterrows():
         symbol = row.trading_symbol
@@ -112,12 +116,11 @@ def run():
     last_log = 0.0
 
     def on_open():
-        print(f"WebSocket connected; subscribed to {len(keys)} instruments.")
+        print(f"WebSocket connected successfully; subscribed to {len(keys)} instruments.")
     def on_error(*args):
         print(f"WebSocket error: {args}")
     def on_close(*args):
         print(f"WebSocket closed: {args}")
-
     def on_message(message):
         raw = as_dict(message)
         for instrument_key, feed in (raw.get("feeds") or {}).items():
@@ -143,10 +146,21 @@ def run():
     streamer.on("error", on_error)
     streamer.on("close", on_close)
 
-    start, end = market_open_close()
-    while datetime.now(IST) < start:
-        time.sleep(5)
-        
+    now, start, end = market_open_close()
+    
+    # If triggered after market close, exit gracefully
+    if now > end:
+        print(f"Market is closed for the day ({now.strftime('%H:%M:%S IST')}). Exiting workflow.")
+        send("🛑 NSE LIVE SCANNER: Triggered after market close. Exiting.")
+        return
+
+    # If triggered before market open, wait cleanly until 09:15 AM IST
+    while now < start:
+        print(f"Pre-market waiting loop: current time {now.strftime('%H:%M:%S IST')}. Waiting for 09:15 AM...")
+        time.sleep(10)
+        now = datetime.now(IST)
+
+    print(f"Entering live monitoring loop at {now.strftime('%H:%M:%S IST')}...")
     try:
         streamer.connect()
         while datetime.now(IST) < end:
@@ -168,7 +182,6 @@ def run():
                 result = evaluate(state, quote, market_context)
                 if not result: continue
 
-                # Evaluate returning an alert dictionary means we hit a milestone!
                 if result.get("alert_type"):
                     alert_key = f"{datetime.now(IST).date()}_{state['symbol']}_{result['alert_type']}"
                     if alert_key in sent_alerts: continue
@@ -185,17 +198,16 @@ def run():
                     send(result["alert_message"])
                     continue
 
-                # Trigger ORB data fetching if condition looks ripe but misses the ORB block
                 eligible = all(passed for name, passed in result["checks"].items() if name not in {"orb", "volume_surge"})
                 needs_data = len(state["orb_highs"]) < 5
                 if eligible and needs_data and instrument_key not in pending and time.monotonic() >= next_refresh.get(instrument_key, 0):
                     pending[instrument_key] = pool.submit(fetch_signal_data, instrument_key)
                     next_refresh[instrument_key] = time.monotonic() + 60
 
-            now = time.time()
-            if now - last_log >= 60:
-                last_log = now
-                print(f"Heartbeat {datetime.now(IST).strftime('%H:%M:%S')} | sent alerts={len(sent_alerts)} | pending ORB={len(pending)}")
+            now_ts = time.time()
+            if now_ts - last_log >= 60:
+                last_log = now_ts
+                print(f"Heartbeat {datetime.now(IST).strftime('%H:%M:%S')} | sent alerts={len(sent_alerts)} | active symbols={len(states)}")
             time.sleep(1)
     finally:
         pool.shutdown(wait=True, cancel_futures=True)

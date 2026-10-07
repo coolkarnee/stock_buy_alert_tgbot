@@ -1,25 +1,20 @@
 import pandas as pd
 import requests
-import upstox_client
 from config import settings
 from datetime import datetime, timedelta
 import concurrent.futures
 
 BASE = "https://api.upstox.com/v2"
 
-def get_client():
-    configuration = upstox_client.Configuration()
-    configuration.access_token = settings.UPSTOX_ACCESS_TOKEN
-    return upstox_client.ApiClient(configuration)
-
 def _request_json(endpoint, params=None):
+    """Direct HTTP request handler to avoid SDK version conflicts."""
     headers = {
         "Accept": "application/json",
         "Authorization": f"Bearer {settings.UPSTOX_ACCESS_TOKEN}"
     }
     url = f"{BASE}{endpoint}"
     try:
-        response = requests.get(url, headers=headers, params=params, timeout=settings.UPSTOX_REQUEST_TIMEOUT)
+        response = requests.get(url, headers=headers, params=params, timeout=15)
         if response.status_code == 200:
             return response.json().get("data", {})
     except Exception as exc:
@@ -27,58 +22,70 @@ def _request_json(endpoint, params=None):
     return {}
 
 def load_instruments():
-    api_instance = upstox_client.InstrumentCsvApi(get_client())
+    """
+    Downloads the official Upstox Instrument Master CSV directly, 
+    bypassing the buggy upstox_client SDK entirely.
+    """
     try:
-        api_response = api_instance.get_instruments("NSE")
-        return [i.to_dict() for i in api_response] if isinstance(api_response, list) else []
+        url = "https://assets.upstox.com/market-quote/instruments/exchange/NSE.csv.gz"
+        df = pd.read_csv(url)
+        # Standardize column names to match what the engine expects
+        df = df.rename(columns={'tradingsymbol': 'trading_symbol', 'exchange': 'segment'})
+        return df.to_dict('records')
     except Exception as exc:
-        print(f"Error loading instruments: {exc}")
+        print(f"Error loading instrument CSV: {exc}")
         return []
 
 def load_nse_equities():
-    print("Fetching active NSE Equities from Upstox...")
+    print("Fetching active NSE Equities directly from Upstox Master CSV...")
     data = load_instruments()
     rows = []
     
     for x in data:
-        if x.get('segment') == 'NSE_EQ' and x.get('instrument_type') == 'EQ' and x.get('security_type', 'NORMAL') == 'NORMAL':
-            if x.get('series') in ['EQ', 'BE']:
-                rows.append({
-                    'instrument_key': x.get('instrument_key'),
-                    'trading_symbol': x.get('trading_symbol')
-                })
+        # Filter for standard NSE Equities
+        if x.get('segment') == 'NSE_EQ' and x.get('instrument_type') == 'EQ':
+            symbol = str(x.get('trading_symbol', ''))
+            rows.append({
+                'instrument_key': x.get('instrument_key'),
+                'trading_symbol': symbol
+            })
             
     universe = pd.DataFrame(rows).drop_duplicates('instrument_key').reset_index(drop=True)
     print(f"Total filtered NSE Equities loaded: {len(universe)}")
     return universe
 
 def historical_daily(instrument_key, years=1):
-    api_instance = upstox_client.HistoryApi(get_client())
+    """Fetches historical candles via direct HTTP request."""
     to_date = datetime.now().strftime("%Y-%m-%d")
     from_date = (datetime.now() - timedelta(days=years * 365)).strftime("%Y-%m-%d")
     
+    endpoint = f"/historical-candle/{instrument_key}/day/{to_date}/{from_date}"
+    headers = {
+        "Accept": "application/json",
+        "Authorization": f"Bearer {settings.UPSTOX_ACCESS_TOKEN}"
+    }
+    url = f"{BASE}{endpoint}"
+    
     try:
-        api_response = api_instance.get_historical_candle_data1(
-            instrument_key=instrument_key,
-            interval="day",
-            to_date=to_date,
-            from_date=from_date
-        )
-        data = api_response.to_dict() if hasattr(api_response, 'to_dict') else {}
-        candles = data.get('data', {}).get('candles', [])
-        if not candles:
-            return pd.DataFrame()
-            
-        df = pd.DataFrame(candles, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume', 'oi'])
-        df['timestamp'] = pd.to_datetime(df['timestamp'])
-        df = df.sort_values('timestamp').reset_index(drop=True)
-        return df
+        response = requests.get(url, headers=headers, timeout=15)
+        if response.status_code == 200:
+            data = response.json().get("data", {}).get("candles", [])
+            if not data:
+                return pd.DataFrame()
+                
+            df = pd.DataFrame(data, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume', 'oi'])
+            df['timestamp'] = pd.to_datetime(df['timestamp'])
+            df = df.sort_values('timestamp').reset_index(drop=True)
+            return df
     except Exception as exc:
-        return pd.DataFrame()
+        pass
+    
+    return pd.DataFrame()
 
 def historical_many(universe, years=1, max_workers=8):
     results = {}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+    # Increased max_workers to 12 to speed up cloud processing
+    with concurrent.futures.ThreadPoolExecutor(max_workers=12) as executor:
         future_to_symbol = {
             executor.submit(historical_daily, row.instrument_key, years): row
             for _, row in universe.iterrows()

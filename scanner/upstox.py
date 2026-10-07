@@ -4,6 +4,8 @@ from config import settings
 from datetime import datetime, timedelta
 import concurrent.futures
 
+BASE = "https://api.upstox.com/v2"
+
 def get_client():
     configuration = upstox_client.Configuration()
     configuration.access_token = settings.UPSTOX_ACCESS_TOKEN

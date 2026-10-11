@@ -1,0 +1,59 @@
+name: NSE Live Alert Performance
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  performance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout current branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Download today's live alert log
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH_NAME: ${{ github.ref_name }}
+        run: |
+          RUN_ID=$(gh run list --workflow live-alerts.yml --branch "$BRANCH_NAME" --limit 20 --json databaseId,status,conclusion,createdAt -q '[.[] | select(.status == "completed" or .status == "in_progress")][0].databaseId')
+          if [ -z "$RUN_ID" ]; then
+            echo "No live scanner run found on branch $BRANCH_NAME."
+            exit 1
+          fi
+          echo "Using live scanner run: $RUN_ID on branch $BRANCH_NAME"
+          gh run download "$RUN_ID" --name live-alerts --dir performance_input
+          find performance_input -name live_alerts.csv -exec cp {} ./live_alerts.csv \;
+          if [ ! -f live_alerts.csv ]; then
+            echo "live_alerts.csv was not found in the live-alerts artifact."
+            exit 1
+          fi
+
+      - name: Calculate today's performance
+        run: python -u performance.py
+        env:
+          UPSTOX_ACCESS_TOKEN: ${{ secrets.UPSTOX_ACCESS_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
+      - name: Upload performance report
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-alert-performance
+          path: performance.csv
+          if-no-files-found: warn
+          retention-days: 30

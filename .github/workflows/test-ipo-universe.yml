@@ -1,0 +1,26 @@
+name: Test IPO Universe
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-ipo-universe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: stock_buy_alert_tgbot
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Test IPO universe
+        env:
+          UPSTOX_ACCESS_TOKEN: ${{ secrets.UPSTOX_ACCESS_TOKEN }}
+        run: |
+          python -c "from scanner.universe import _ipo_symbols; symbols=sorted(_ipo_symbols()); print('IPO count since 2026-01-01:', len(symbols)); print('Symbols:'); print('\\n'.join(symbols))"

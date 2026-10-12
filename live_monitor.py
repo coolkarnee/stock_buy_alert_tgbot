@@ -49,19 +49,19 @@ def extract_quote(feed):
     }
 
 def fmt_alert(kind, r):
-    context = r["market_above_ema"]
-    market = "unavailable" if context is None else ("above EMA21" if context else "below EMA21")
+    market = r.get("market_regime", "Unavailable")
     ranges = ", ".join(f"{window}m" for window in r["orb_windows"])
     return (
         f"MOMENTUM {kind} - {r['symbol']}\n"
-        f"Price Rs {r['price']:.2f} | PDC buffer Rs {r['pivot']:.2f}\n"
+        f"Price Rs {r['price']:.2f} | PDC SL Rs {r['pivot']:.2f}\n"
         f"RVOL {r['rvol']:.2f}x | ATR {r['atr_pct']:.2f}% | IPO {r['is_ipo']}\n"
+        f"Intraday move {r['intraday_move']:.2f}% from open | {r['intraday_move_from_low']:.2f}% from low\n"
         f"From high {r['from_high']:.2f}% | Rally {r['swing']:.1f}%\n"
         f"Turnover Rs {r['price'] * r['volume'] / 1e7:.1f} Cr\n"
         f"ORB break: {ranges} | Pocket pivot {r['pocket_pivot']} | First 30m surge {r['first30_surge']}\n"
         f"Extension EMA10 {r['extension10']:.1f}% / EMA21 {r['extension21']:.1f}%\n"
         f"Prior volume dry-up: {'yes' if r['dry_up'] else 'no (warning only)'}\n"
-        f"NIFTYSMLCAP250: {market} (informational)\n"
+        f"NIFTYSMLCAP250: {market}\n"
         f"Live scanner only - no order placed."
     )
 
@@ -78,13 +78,21 @@ def run():
     universe = load_nse_equities()
     nifty_key = None
     nifty_df = pd.DataFrame()
-    benchmark_ema = None
+    benchmark_ema10 = None
+    benchmark_ema21 = None
+    benchmark_prev_ema10 = None
+    benchmark_prev_ema21 = None
     try:
         nifty_key = find_smallcap250_key()
         nifty_df = historical_daily(nifty_key, years=2)
         completed_index = _completed(nifty_df)
         if len(completed_index) >= 21:
-            benchmark_ema = float(ema(completed_index.close, 21).iloc[-1])
+            benchmark_ema10_series = ema(completed_index.close, 10)
+            benchmark_ema21_series = ema(completed_index.close, 21)
+            benchmark_ema10 = float(benchmark_ema10_series.iloc[-1])
+            benchmark_ema21 = float(benchmark_ema21_series.iloc[-1])
+            benchmark_prev_ema10 = float(benchmark_ema10_series.iloc[-2])
+            benchmark_prev_ema21 = float(benchmark_ema21_series.iloc[-2])
     except Exception as exc:
         print(f"Smallcap 250 context unavailable (not a BUY filter): {exc}")
     print(f"Preparing live states for {len(universe)} NSE equities...")
@@ -128,7 +136,7 @@ def run():
     pending = {}
     next_refresh = {}
     pool = ThreadPoolExecutor(max_workers=settings.UPSTOX_MAX_WORKERS)
-    market_context = {"above_ema": None}
+    market_context = {"above_ema": None, "regime": "Unavailable"}
     last_log = 0.0
 
     def on_open():
@@ -147,9 +155,20 @@ def run():
             try:
                 quote = extract_quote(feed)
                 if instrument_key == nifty_key:
-                    if benchmark_ema is not None and quote["last_price"] > 0:
-                        live_ema = benchmark_ema + 2 / 22 * (quote["last_price"] - benchmark_ema)
-                        market_context["above_ema"] = quote["last_price"] > live_ema
+                    if (benchmark_ema10 is not None and benchmark_ema21 is not None and
+                            benchmark_prev_ema10 is not None and benchmark_prev_ema21 is not None and
+                            quote["last_price"] > 0):
+                        live_ema10 = benchmark_ema10 + 2 / 11 * (quote["last_price"] - benchmark_ema10)
+                        live_ema21 = benchmark_ema21 + 2 / 22 * (quote["last_price"] - benchmark_ema21)
+                        ema10_up = live_ema10 > benchmark_prev_ema10
+                        ema21_up = live_ema21 > benchmark_prev_ema21
+                        if live_ema10 > live_ema21 and ema10_up and ema21_up:
+                            market_context["regime"] = "Bull Market"
+                        elif live_ema10 < live_ema21 and not ema10_up and not ema21_up:
+                            market_context["regime"] = "Bear Market"
+                        else:
+                            market_context["regime"] = "Chop Market"
+                        market_context["above_ema"] = quote["last_price"] > live_ema21
                     continue
                 if instrument_key in states:
                     with quote_lock:
@@ -191,6 +210,7 @@ def run():
                     continue
                 if market_context["above_ema"] is not None:
                     state["market_above_ema"] = market_context["above_ema"]
+                state["market_regime"] = market_context["regime"]
                 result = evaluate(state, quote)
                 if not result:
                     continue

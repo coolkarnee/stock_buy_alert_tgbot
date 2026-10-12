@@ -133,6 +133,9 @@ def evaluate(state, quote):
     if (price <= 0 or volume <= 0 or day_open <= 0 or
             float(ohlc.get("high") or 0) <= 0 or float(ohlc.get("low") or 0) <= 0):
         return None
+    intraday_move = (price / day_open - 1) * 100
+    intraday_move_from_low = (price / day_low - 1) * 100
+    intraday_move_condition = intraday_move >= 4.0 or intraday_move_from_low >= 4.0
     current_ema10 = state["ema10"] + 2 / 11 * (price - state["ema10"])
     current_ema21 = state["ema21"] + 2 / 22 * (price - state["ema21"])
     extension10 = (price / current_ema10 - 1) * 100
@@ -194,7 +197,7 @@ def evaluate(state, quote):
     checks = {
         "trend": state["history_days"] + 1 <= 21 or price > current_ema21,
         "extension": not getattr(settings, "LIVE_BLOCK_EXTENDED", False) or (extension10 <= 10 and extension21 <= 20),
-        "volume_surge": rvol_condition or pocket or first30_surge,
+        "volume_surge": rvol_condition or pocket or first30_surge or intraday_move_condition,
         "momentum": price > state["prev_close"],
         "breakout": breakout,
         "strength": state["is_ipo"] or swing >= settings.MIN_SWING_RETURN,
@@ -213,6 +216,9 @@ def evaluate(state, quote):
         "turnover_cr": turnover_cr,
         "rvol": rvol,
         "rvol_condition": rvol_condition,
+        "intraday_move": intraday_move,
+        "intraday_move_from_low": intraday_move_from_low,
+        "intraday_move_condition": intraday_move_condition,
         "atr_pct": atr_pct,
         "from_high": from_high,
         "swing": swing,

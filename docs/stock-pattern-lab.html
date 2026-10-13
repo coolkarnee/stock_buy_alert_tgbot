@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Stock Pattern Lab</title>
+  <style>
+    :root { color-scheme: light; --ink:#172033; --muted:#5d687a; --line:#dfe5ee; --card:#fff; --bg:#f4f7fb; --accent:#155eef; --green:#087443; }
+    * { box-sizing:border-box; }
+    body { margin:0; font:16px/1.6 system-ui,-apple-system,Segoe UI,sans-serif; color:var(--ink); background:var(--bg); }
+    main { max-width:1040px; margin:0 auto; padding:48px 22px 72px; }
+    h1 { font-size:clamp(2rem,5vw,3.4rem); line-height:1.1; margin:0 0 12px; }
+    h2 { margin-top:42px; padding-bottom:8px; border-bottom:1px solid var(--line); }
+    h3 { margin-top:28px; }
+    .lead { color:var(--muted); font-size:1.15rem; max-width:760px; }
+    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:16px; margin:28px 0; }
+    .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:20px; box-shadow:0 4px 18px #1b2a4810; }
+    .card h3 { margin:0 0 8px; }
+    .tag { color:var(--accent); font-weight:700; }
+    li { margin:6px 0; }
+    code { background:#eaf0fb; border-radius:5px; padding:2px 5px; }
+    pre { overflow:auto; background:#172033; color:#eef4ff; padding:18px; border-radius:10px; }
+    table { width:100%; border-collapse:collapse; background:var(--card); }
+    th,td { text-align:left; vertical-align:top; border:1px solid var(--line); padding:10px 12px; }
+    th { background:#eaf0fb; }
+    .note { border-left:4px solid var(--accent); padding:10px 16px; background:#edf4ff; }
+    footer { color:var(--muted); margin-top:48px; font-size:.92rem; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Stock Pattern Lab</h1>
+  <p class="lead">An alert-only NSE equity scanner using Upstox market data. It sends Telegram alerts, places no orders, and maintains a persistent swing-performance report.</p>
+
+  <div class="grid">
+    <section class="card"><h3>Momentum BUY</h3><p>All ten Momentum BUY conditions must pass, including trend, volume confirmation, momentum, breakout, rally strength, near-high, volatility, price, liquidity, and ORB.</p></section>
+    <section class="card"><h3>Episodic Pivot BUY</h3><p>An independent five-condition alert for a gap above 5%, price above developing EMA21, price above ₹20, ATR qualification, and liquidity.</p></section>
+    <section class="card"><h3>Swing performance</h3><p>Every alert is retained until entry-day SL, a daily close below 10 EMA, or a daily close below 21 EMA. Open rows are marked through the report date.</p></section>
+  </div>
+
+  <h2>When will a Telegram BUY alert fire?</h2>
+  <p>This section explains the alert from a share-market perspective, without requiring technical knowledge of the implementation.</p>
+  <h3>Momentum BUY</h3>
+  <p>This alert means the stock is showing a broad combination of strength rather than only a short-lived price spike. It suggests that the stock is trending strongly, buyers are participating, the price is attempting to move beyond an important recent range, and the stock remains reasonably close to its recent high with enough liquidity for meaningful participation.</p>
+  <p>In simple terms, the stock is demonstrating sustained market strength and attempting to continue that move. It is not a guarantee that the stock will rise or a recommendation to buy without checking risk, news, valuation, position size, and the wider market.</p>
+  <h3>Episodic Pivot BUY</h3>
+  <p>This alert means the stock opened with a sharp positive gap and is continuing to hold above an important trend level. This can indicate new information, a result, an announcement, or a sudden change in investor demand.</p>
+  <p>Gap-up stocks can be volatile: they may continue higher, move sideways, or quickly give back the gap. The alert is therefore a prompt for further research and risk planning, not confirmation of a guaranteed return.</p>
+  <p class="note">The message can arrive only during the live monitoring session after the market opens. Every required condition for that category must be satisfied at the same time. At most one Momentum BUY and one Episodic Pivot BUY is sent for the same stock during a run. No automatic order is placed.</p>
+  <p>Telegram delivery requires the Telegram settings. Without them, the alert appears in the workflow log.</p>
+
+  <h2>Momentum BUY conditions</h2>
+  <ol>
+    <li>Price is above developing EMA21, except during the first 21 listing days.</li>
+    <li>At least one volume confirmation: RVOL &gt; 1.30x, pocket pivot, first-30-minute surge, price up at least 4% from open, or daily volume &gt; 9M.</li>
+    <li>Price is above yesterday's close.</li>
+    <li>Price exceeds the breakout reference by the 0.50% buffer.</li>
+    <li>Rally from the 52-week low is at least 30%, except IPOs.</li>
+    <li>Price is within 20% of the 52-week high, or within 15% for IPOs.</li>
+    <li>ATR is above 3.9%, except IPOs.</li>
+    <li>Price is strictly above ₹20.</li>
+    <li>Turnover/liquidity is strictly above ₹20 Cr.</li>
+    <li>Price breaks at least one 3m, 5m, 15m, 30m, or 60m opening range.</li>
+  </ol>
+
+  <h2>Episodic Pivot BUY</h2>
+  <ul>
+    <li>Day's open is strictly more than 5% above yesterday's close.</li>
+    <li>Current price is above developing EMA21.</li>
+    <li>Price is strictly above ₹20.</li>
+    <li>ATR is above 3.9%, except IPOs.</li>
+    <li>Turnover/liquidity is above ₹20 Cr.</li>
+  </ul>
+  <p class="note">EP alerts do not require Momentum BUY volume confirmation, momentum, breakout, rally-strength, near-high, or opening-range conditions.</p>
+
+  <h2>Opening-range mode</h2>
+  <p>The default in <code>config/settings.py</code> is <code>OPENING_RANGE_BREAKOUT_MODE="close"</code>. Close mode requires a completed intraday candle close above the opening-range high. Setting it to <code>"spot"</code> triggers when live price crosses above the range high.</p>
+
+  <h2>Market context</h2>
+  <p>The live alert displays one of exactly three categories:</p>
+  <ul>
+    <li><strong>Bull Market:</strong> benchmark above both 10 and 20 EMA, with both EMA slopes rising.</li>
+    <li><strong>Bear Market:</strong> benchmark below both 10 and 20 EMA.</li>
+    <li><strong>Choppy Market:</strong> all other conditions.</li>
+  </ul>
+  <p>The scanner tries NIFTY SMLCAP 250 first and falls back to NIFTY 500.</p>
+
+  <h2>Persistent performance sheet</h2>
+  <p>After the live alert workflow and daily performance workflow complete, the swing workflow recalculates all stored alerts and commits the latest file to <code>artifacts/swing_performance.csv</code>. It also uploads a downloadable <code>swing-performance-latest</code> artifact.</p>
+  <table>
+    <thead><tr><th>CSV column</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td>Alert ID</td><td>Stable alert identifier.</td></tr>
+      <tr><td>Performance As Of Date</td><td>Date through which the report was computed.</td></tr>
+      <tr><td>Ticker Name / Buy Price / Entry Day SL</td><td>Alert trade reference values.</td></tr>
+      <tr><td>Alert Type / Alert Date / Alert Time</td><td>Momentum or EP category and entry timestamp.</td></tr>
+      <tr><td>SL Hit Date / SL Type</td><td>First exit date and whether it was entry-day SL, 10 EMA break, or 21 EMA break. Open rows show “Open as of report date”.</td></tr>
+      <tr><td>Holding Days</td><td>Trading sessions from alert through exit, or through the report date while open.</td></tr>
+      <tr><td>Performance %</td><td>Return from buy price to exit price, or latest close while open.</td></tr>
+      <tr><td>Status</td><td><code>EXITED</code>, <code>OPEN</code>, or a data/error status.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Workflow sequence</h2>
+  <pre>Manual start: NSE Live Telegram Alerts
+        ↓
+NSE Live Alert Performance
+        ↓
+NSE Swing Performance
+        ↓
+artifacts/swing_performance.csv + downloadable artifact</pre>
+
+  <h2>Required secrets</h2>
+  <p><code>UPSTOX_ACCESS_TOKEN</code>, <code>TELEGRAM_BOT_TOKEN</code>, and <code>TELEGRAM_CHAT_ID</code>. If Telegram credentials are absent, messages are printed locally.</p>
+  <footer>Generated from the current Stock Pattern Lab repository behavior. This system is alert-only and does not place orders.</footer>
+</main>
+</body>
+</html>

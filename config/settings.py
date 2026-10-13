@@ -11,6 +11,9 @@ MAX_FROM_52W_HIGH=20.0
 MIN_ATR_PCT=3.9
 MIN_RVOL=1.30
 BREAKOUT_BUFFER_PCT=0.50
+# Opening-range breakout trigger: "close" requires a completed candle close
+# above the opening-range high; "spot" triggers when live price crosses it.
+OPENING_RANGE_BREAKOUT_MODE="close"
 # A previous candle closing more than this percentage below its open uses
 # only its high as the next breakout reference.
 DARK_RED_CANDLE_DROP_PCT=4.0

@@ -1,0 +1,73 @@
+name: NSE Swing Performance
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows:
+      - NSE Live Alert Performance
+    types:
+      - completed
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: nse-swing-performance
+  cancel-in-progress: false
+
+jobs:
+  swing-performance:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout performance history
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_branch || github.ref_name }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Download live alert input
+        if: ${{ github.event_name == 'workflow_run' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download "${{ github.event.workflow_run.id }}" \
+            --name live-alert-performance --dir performance_input
+          find performance_input -name live_alerts.csv -exec cp {} ./live_alerts.csv \;
+
+      - name: Calculate swing performance
+        run: python -u swing_performance.py
+        env:
+          UPSTOX_ACCESS_TOKEN: ${{ secrets.UPSTOX_ACCESS_TOKEN }}
+
+      - name: Commit latest performance history
+        if: ${{ github.event_name == 'workflow_run' }}
+        env:
+          TARGET_BRANCH: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add artifacts/swing_performance.csv
+          if git diff --cached --quiet; then
+            echo "No swing performance changes to commit."
+          else
+            git commit -m "Update swing performance history"
+            git push origin "HEAD:${TARGET_BRANCH}"
+          fi
+
+      - name: Upload swing performance artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: swing-performance-latest
+          path: artifacts/swing_performance.csv
+          if-no-files-found: error
+          retention-days: 90

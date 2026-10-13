@@ -65,6 +65,7 @@ def build_state(symbol, df, nifty_df):
         ),
         "market_above_ema": market_above_ema,
         "orb_highs": {},
+        "orb_close_breaks": {},
         "first30_volume": None,
         # RVOL baseline inputs matching the PineScript calculation.
         "rvol_traded_days": len(history),
@@ -108,7 +109,12 @@ def update_intraday(state, candles, now=None):
         if opening.empty:
             continue
 
-        state["orb_highs"][window] = float(opening.high.max())
+        opening_high = float(opening.high.max())
+        state["orb_highs"][window] = opening_high
+        after_opening = bars[bars.timestamp >= window_end]
+        state["orb_close_breaks"][window] = bool(
+            not after_opening.empty and (after_opening.close > opening_high).any()
+        )
         if window == 30:
             state["first30_volume"] = float(opening.volume.sum())
 
@@ -135,7 +141,7 @@ def evaluate(state, quote):
         return None
     intraday_move = (price / day_open - 1) * 100
     intraday_move_from_low = (price / day_low - 1) * 100
-    intraday_move_condition = intraday_move >= 4.0 or intraday_move_from_low >= 4.0
+    intraday_move_condition = intraday_move >= 4.0
     current_ema10 = state["ema10"] + 2 / 11 * (price - state["ema10"])
     current_ema21 = state["ema21"] + 2 / 22 * (price - state["ema21"])
     extension10 = (price / current_ema10 - 1) * 100
@@ -162,6 +168,7 @@ def evaluate(state, quote):
         avg_vol20 = (state["rvol_prev19_volume"] + volume) / 20.0
     rvol = volume / avg_vol20 if avg_vol20 > 0 else 0.0
     rvol_condition = rvol > settings.MIN_RVOL
+    daily_volume_condition = volume > 9_000_000
 
     # PineScript turnover/liquidity logic:
     # if tradedDays < 50:
@@ -187,7 +194,18 @@ def evaluate(state, quote):
 
     pocket = day_open > 0 and price > day_open and state["red_max_volume"] > 0 and volume > state["red_max_volume"]
     first30_surge = state["first30_volume"] is not None and state["first30_volume"] > state["avg_volume10"]
-    orb_windows = [window for window, high in state["orb_highs"].items() if minutes >= window and price > high]
+    orb_mode = getattr(settings, "OPENING_RANGE_BREAKOUT_MODE", "close").lower()
+    if orb_mode == "spot":
+        orb_windows = [
+            window for window, high in state["orb_highs"].items()
+            if minutes >= window and price > high
+        ]
+    else:
+        orb_mode = "close"
+        orb_windows = [
+            window for window in state["orb_highs"]
+            if minutes >= window and state.get("orb_close_breaks", {}).get(window, False)
+        ]
     breakout_reference = (
         state["prev_high"]
         if state["dark_red_previous_candle"]
@@ -197,7 +215,7 @@ def evaluate(state, quote):
     checks = {
         "trend": state["history_days"] + 1 <= 21 or price > current_ema21,
         "extension": not getattr(settings, "LIVE_BLOCK_EXTENDED", False) or (extension10 <= 10 and extension21 <= 20),
-        "volume_surge": rvol_condition or pocket or first30_surge or intraday_move_condition,
+        "volume_surge": rvol_condition or pocket or first30_surge or intraday_move_condition or daily_volume_condition,
         "momentum": price > state["prev_close"],
         "breakout": breakout,
         "strength": state["is_ipo"] or swing >= settings.MIN_SWING_RETURN,
@@ -207,15 +225,25 @@ def evaluate(state, quote):
         "liquidity": liquidity_condition,
         "orb": bool(orb_windows),
     }
+    episodic_pivot = (
+        day_open > state["prev_close"] * 1.05 and
+        price > current_ema21 and
+        price > settings.MIN_PRICE and
+        (state["is_ipo"] or atr_pct > settings.MIN_ATR_PCT) and
+        liquidity_condition
+    )
     return {
         **state,
         "price": price,
         "volume": volume,
+        "day_open": day_open,
         "avg_turnover10_cr": state["avg_turnover10_cr"],
         "turnover_raw": turnover_raw,
         "turnover_cr": turnover_cr,
+        "turnover_period_days": min(turnover_traded_days, 50),
         "rvol": rvol,
         "rvol_condition": rvol_condition,
+        "daily_volume_condition": daily_volume_condition,
         "intraday_move": intraday_move,
         "intraday_move_from_low": intraday_move_from_low,
         "intraday_move_condition": intraday_move_condition,
@@ -227,8 +255,10 @@ def evaluate(state, quote):
         "pocket_pivot": bool(pocket),
         "first30_surge": bool(first30_surge),
         "orb_windows": sorted(orb_windows),
+        "orb_mode": orb_mode,
         "breakout": breakout,
         "checks": checks,
+        "episodic_pivot": episodic_pivot,
         "score": sum(bool(passed) for passed in checks.values()),
         "buy": all(checks.values()),
         "timestamp": quote.get("timestamp", ""),

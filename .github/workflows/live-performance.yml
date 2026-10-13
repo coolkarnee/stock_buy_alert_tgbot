@@ -2,6 +2,11 @@ name: NSE Live Alert Performance
 
 on:
   workflow_dispatch:
+  workflow_run:
+    workflows:
+      - NSE Live Telegram Alerts
+    types:
+      - completed
 
 permissions:
   contents: read
@@ -9,13 +14,14 @@ permissions:
 
 jobs:
   performance:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - name: Checkout current branch
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.ref_name }}
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -28,9 +34,14 @@ jobs:
       - name: Download today's live alert log
         env:
           GH_TOKEN: ${{ github.token }}
-          BRANCH_NAME: ${{ github.ref_name }}
         run: |
-          RUN_ID=$(gh run list --workflow live-alerts.yml --branch "$BRANCH_NAME" --limit 20 --json databaseId,status,conclusion,createdAt -q '[.[] | select(.status == "completed" or .status == "in_progress")][0].databaseId')
+          if [ "$GITHUB_EVENT_NAME" = "workflow_run" ]; then
+            RUN_ID="${{ github.event.workflow_run.id }}"
+            BRANCH_NAME="${{ github.event.workflow_run.head_branch }}"
+          else
+            BRANCH_NAME="${{ github.ref_name }}"
+            RUN_ID=$(gh run list --workflow live-alerts.yml --branch "$BRANCH_NAME" --limit 20 --json databaseId,status,conclusion,createdAt -q '[.[] | select(.status == "completed" or .status == "in_progress")][0].databaseId')
+          fi
           if [ -z "$RUN_ID" ]; then
             echo "No live scanner run found on branch $BRANCH_NAME."
             exit 1
@@ -54,6 +65,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: live-alert-performance
-          path: performance.csv
+          path: |
+            performance.csv
+            live_alerts.csv
           if-no-files-found: warn
           retention-days: 30

@@ -2,19 +2,56 @@
 
 An NSE equity screening and alerting tool. It has an unchanged daily historical VCP scan and an intraday WebSocket momentum BUY monitor using Upstox prices and Yahoo Finance market capitalization.
 
-This repository is an alert-only scanner. It does not place orders, manage positions, persist signal/lifecycle state between runs, or implement defense and exit rules. The word “lifecycle” in the workflow name is not evidence that those stages are implemented.
+This repository is an alert-only scanner. It does not place orders or manage positions. The swing-performance report is a retrospective calculation, not an order-management or execution system.
 
 ## What Runs Today
 
 | Entry point | Behavior |
 | --- | --- |
 | `main.py` | Downloads the current universe and about two years of daily history, evaluates each stock, prints a scan summary, sends Telegram alerts for BUY results, and writes `scan_results.csv` if there are results or per-symbol failures to report. |
-| `live_monitor.py` | Builds historical reference state, connects to the Upstox V3 full-market WebSocket, evaluates live quotes each second, and sends at most one momentum BUY alert per symbol per day within that process. |
+| `live_monitor.py` | Builds historical reference state, connects to the Upstox V3 full-market WebSocket, evaluates live quotes each second, and sends at most one Momentum BUY and one Episodic Pivot BUY alert per symbol per day within that process. |
 | `performance.py` | Reads the live alert CSV, fetches the day's close and post-alert intraday high, sends a Telegram summary, and writes `performance.csv`. |
+| `swing_performance.py` | Recomputes the persistent swing-performance sheet for every live alert until the first daily SL/EMA break. |
 | `test_live_engine.py` | Offline automated tests for momentum rules, IPO exemptions, ORB candles, feed parsing, and mocked Telegram dispatch. |
 | `test_telegram.py` | Sends a fixed Telegram connectivity test message. This is a manual smoke test, not an automated test suite. |
 
 There are no command-line options. The batch function accepts an optional `limit` when called from Python, but its normal script invocation scans the full loaded universe. The configured `MAX_UNIVERSE` value is currently not applied.
+
+## When Will a Telegram BUY Alert Fire? — Share-Market Guide
+
+This section explains the alert as a market signal, without requiring knowledge of the implementation.
+
+### Momentum BUY
+
+A Momentum BUY alert means the stock is showing a broad combination of strength rather than only a short-lived price spike. From a share-market perspective, the alert indicates that:
+
+- The stock is trading strongly compared with its recent trend.
+- Buyers are participating through meaningful trading activity or a strong price move.
+- The current rise has moved beyond an important recent price range, suggesting a possible breakout.
+- The stock is still reasonably close to its recent high instead of being deeply weak.
+- The stock has enough liquidity for the alert to be practically observable and tradable.
+- The stock's price movement is large enough to be considered meaningful, while the alert still checks broader price context.
+
+In simple terms, this alert is intended for a stock that is already demonstrating sustained market strength and is attempting to continue that move. It is not a prediction that the stock must rise, and it is not a recommendation to buy without checking risk, position size, news, valuation, and the overall market.
+
+### Episodic Pivot BUY
+
+An Episodic Pivot BUY alert means the stock has opened with a sharp positive gap compared with the previous trading day's close and is continuing to hold above an important trend level. From a share-market perspective, this can indicate that new information, a result, an announcement, or a sudden change in investor demand is attracting buyers.
+
+The alert is looking for a stock where:
+
+- The opening gap is substantial rather than ordinary day-to-day movement.
+- Buyers are holding the stock above its developing trend level after the gap.
+- The stock is not trading below the minimum practical price level used for this watchlist.
+- The stock has sufficient daily price movement and liquidity to support meaningful participation.
+
+In simple terms, this alert highlights a possible change in investor sentiment. Gap-up stocks can also be volatile: they may continue higher, move sideways, or quickly give back the gap. The alert should therefore be treated as a prompt for further research and risk planning, not as confirmation of a guaranteed return.
+
+### When to expect the message
+
+The Telegram message can arrive only during the live market-monitoring session after the live workflow has been started and after the market has opened. A stock must meet the complete set of requirements for its alert category at the same time. If the stock loses the required strength before that happens, the message will not be sent.
+
+At most one Momentum BUY and one Episodic Pivot BUY message is sent for the same stock during one monitoring run. No order is placed automatically. Telegram delivery requires the configured Telegram credentials; otherwise the message is available in the workflow log.
 
 ## Setup
 
@@ -58,7 +95,7 @@ The universe is rebuilt each run. `scanner/universe.py` collects the union of co
 
 Universe sources are external services, not bundled files. Individual source failures are printed as warnings; loading can continue if another source returns symbols. The run stops if no symbols are collected. Instruments not found in Upstox's instrument master are omitted.
 
-Both scanners fetch approximately two years of daily candles for each eligible stock. Batch scanning uses Nifty 500 as its benchmark and six worker threads, and requires 260 daily bars. Live state preparation uses `UPSTOX_MAX_WORKERS` (default eight), removes candles dated today, and requires at least one completed daily bar. Live market context uses Nifty Smallcap 250. Failed or empty history requests are skipped.
+Both scanners fetch approximately two years of daily candles for each eligible stock. Batch scanning uses Nifty 500 as its benchmark and six worker threads, and requires 260 daily bars. Live state preparation uses `UPSTOX_MAX_WORKERS` (default eight), removes candles dated today, and requires at least one completed daily bar. Live market context uses Nifty Smallcap 250 and falls back to Nifty 500 if the Smallcap benchmark lookup or history is unavailable. Failed or empty history requests are skipped.
 
 Upstox historical requests use bearer-token authentication, a shared rate limiter configured for 450 requests per minute, a 15-second default timeout, and one retry for selected transient HTTP statuses or request exceptions. Universe CSVs, the NSE IPO tracker, and the instrument master use separate request paths and do not share all of those retry/rate-limit behaviors.
 
@@ -116,16 +153,28 @@ otherwise: latest close >= max(previous high, previous close) × 1.005
 Live selection does not use VCP or the batch candidate score. All mandatory conditions must align:
 
 - Current price is above the developing daily EMA21, except through listing day 21.
-- Volume confirmation is projected RVOL strictly above 1.3x, a pocket pivot, or completed first-30-minute volume above the preceding 10-session average daily volume.
+- Volume confirmation is at least one of projected RVOL strictly above 1.3x, a pocket pivot, completed first-30-minute volume above the preceding 10-session average daily volume, price up at least 4% from the open, or daily volume above 9M shares.
 - Price is above yesterday's close and strictly above the lower of yesterday's high and close, with the 0.50% breakout buffer applied. If yesterday's candle closed more than 4% below its open, the live breakout ignores yesterday's close and uses only yesterday's high × 1.005.
 - Rally from the 52-week low is at least 30%; distance from the 52-week high is at most 20%.
 - Developing daily ATR14 is strictly above 3.9% of current price.
 - Price is strictly above Rs 20 and the calculated turnover/liquidity value is strictly above Rs 20 Cr. The repository contains a Yahoo Finance `market_cap_cr()` helper, but `live_engine.evaluate()` does not call it; market capitalization is currently not a live BUY filter.
-- Price is strictly above at least one completed 3m, 5m, 15m, 30m, or 60m opening-range high, measured from 09:15 IST.
+- Price is strictly above at least one completed 3m, 5m, 15m, 30m, or 60m opening-range high, measured from 09:15 IST. `OPENING_RANGE_BREAKOUT_MODE="close"` requires a completed candle close above that high; `"spot"` triggers on the live price crossing it.
+
+### Episodic Pivot BUY
+
+An independent EP alert requires all five conditions below:
+
+- The day's open is strictly more than 5% above yesterday's close.
+- Current price is above the developing EMA21.
+- Price is strictly above ₹20.
+- ATR is above 3.9%, except for IPOs.
+- Turnover/liquidity is above ₹20 Cr.
+
+EP alerts do not require Momentum BUY volume confirmation, momentum, breakout, rally-strength, near-high, or opening-range conditions.
 
 Stocks with fewer than 252 completed daily candles are treated as IPOs: rally and ATR checks auto-pass, and proximity must be within 15% of the listing high. This uses available history as a listing-age proxy; incomplete provider history may therefore misclassify a stock. A first-day listing without a previous daily candle cannot be evaluated against yesterday's close.
 
-EMA10/EMA21 extension is shown in alerts but is not a blocking filter by default. Set `LIVE_BLOCK_EXTENDED=True` to require at most 10% above EMA10 and 20% above EMA21. Prior three-session average volume below the preceding 20-session average is informational only and never blocks a BUY. NIFTYSMLCAP250 versus its developing EMA21 is also informational; an unavailable benchmark does not block alerts.
+EMA10/EMA21 extension is shown in alerts but is not a blocking filter by default. Set `LIVE_BLOCK_EXTENDED=True` to require at most 10% above EMA10 and 20% above EMA21. Prior three-session average volume below the preceding 20-session average is informational only and never blocks a BUY. The selected NIFTY Smallcap 250 or Nifty 500 market context is also informational and never blocks alerts.
 
 RVOL projects cumulative volume to a 375-minute session using elapsed session time and the preceding 20-session average. Turnover uses actual cumulative volume, not projected volume. Live EMA and ATR incorporate the developing daily candle, so they may change before the close.
 
@@ -139,9 +188,19 @@ The batch scan writes `scan_results.csv` in the current working directory when t
 
 The batch output is sorted with BUYs and candidates first, followed by VCP quality and score. The console prints scan health, counts, and up to 30 candidates. Only BUY results are sent as stock alerts; candidate-only results are not.
 
-The live monitor sends only momentum BUY messages, at most once per symbol per trading day within that process. Restart the monitor each trading day; it exits at 15:20 IST. There is no database or file-backed state to suppress repeats across separate runs on the same day.
+The live monitor sends Momentum BUY and Episodic Pivot BUY messages, at most once per category and symbol per trading day within that process. Restart the monitor each trading day; it exits at 15:20 IST. There is no database or file-backed state to suppress repeats across separate runs on the same day.
 
 Telegram delivery uses the Telegram Bot API `sendMessage` endpoint. A non-success response or request exception is printed and processing continues. Missing Telegram credentials cause the message to be printed locally.
+
+## Swing Performance
+
+The live monitor records each Momentum BUY and Episodic Pivot BUY with ticker, buy price, pivot-based SL, alert type, date, and time in `live_alerts.csv`. The `swing_performance.py` job merges the current day's alerts with the committed history in `artifacts/swing_performance.csv` and recalculates every row.
+
+The report keeps every alert active until the workflow run date unless the first exit is hit: entry-day SL, a daily close below the 10 EMA, or a daily close below the 21 EMA. `SL Type` identifies which exit occurred. If no exit occurs, the row is marked `OPEN` and performance is measured through the report date shown in the first column. The sheet is recalculated and persistently updated whenever the workflow runs. EMA and SL checks use daily bars, so this is a daily-bar retrospective report rather than tick-level execution accounting.
+
+The latest CSV is committed under `artifacts/swing_performance.csv` and uploaded as the `swing-performance-latest` GitHub Actions artifact for convenient download. The swing workflow runs automatically after `NSE Live Alert Performance` completes successfully and can also be started manually.
+
+For a shareable web-format overview, open [`docs/stock-pattern-lab.html`](./docs/stock-pattern-lab.html) in a browser or publish it with any static web host.
 
 ## Configuration
 
@@ -159,17 +218,18 @@ The screening thresholds and VCP parameters are Python constants in `config/sett
 
 ## Automation
 
-There are five GitHub Actions workflows. Only the live alert workflow runs automatically. The other four are manual `workflow_dispatch` jobs:
+There are six GitHub Actions workflows. The live alert, live performance, and swing performance workflows are chained from manual execution; the remaining workflows are manual `workflow_dispatch` jobs:
 
 | Workflow | Schedule | Action |
 | --- | --- | --- |
 | `.github/workflows/daily-scan.yml` | Manual only | Runs `main.py`, then uploads `scan_results.csv` for seven days. Artifact upload fails if the file was not created. The comment mentioning a daily scan is stale; there is no `schedule` trigger in this file. |
-| `.github/workflows/live-alerts.yml` | Weekdays at 03:40 UTC (09:10 IST) and manual | Runs `live_monitor.py`. The process waits until 09:15 IST, monitors until 15:20 IST, and uploads `live_alerts.csv` even when the job fails. A concurrency group cancels an older run on the same branch. |
-| `.github/workflows/live-performance.yml` | Manual only | Finds the newest completed/in-progress `live-alerts.yml` run for the selected branch, downloads its `live-alerts` artifact, runs `performance.py`, and uploads `performance.csv` for 30 days. It fails when no suitable live run or alert artifact exists. |
+| `.github/workflows/live-alerts.yml` | Manual only | Runs `live_monitor.py`. The process waits until 09:15 IST, monitors until 15:20 IST, and uploads `live_alerts.csv` even when the job fails. A concurrency group cancels an older run on the same branch. |
+| `.github/workflows/live-performance.yml` | After successful live alerts and manual | Downloads the exact triggering `live-alerts.yml` artifact, runs `performance.py`, and uploads the daily report plus alert input for 30 days. |
+| `.github/workflows/swing-performance.yml` | After successful live performance and manual | Downloads the alert input, recalculates all persistent swing rows until exit or report date, commits `artifacts/swing_performance.csv`, and uploads the latest sheet for 90 days. |
 | `.github/workflows/test-ipo-universe.yml` | Manual only | Checks out the hard-coded `Nilesh_branch_to_add_ipos` branch, installs dependencies, and calls the Upstox IPO API to print listed IPO symbols since 2026-01-01. It is not a main-branch test until its checkout ref is changed. |
 | `.github/workflows/test-telegram.yml` | Manual only | Runs the fixed Telegram connectivity message. |
 
-The daily scan and live monitor are separate jobs; the batch run does not feed state to the live process. Performance is also a separate, manually started job that consumes the live job's artifact rather than a database.
+The daily scan and live monitor are separate jobs; the batch run does not feed state to the live process. The live performance and swing performance jobs consume workflow artifacts, while the committed swing CSV provides persistence between runs.
 
 ### Main-branch checklist
 
@@ -179,7 +239,7 @@ Before enabling this reference branch in the main branch:
 2. Ensure Actions are enabled and the repository permits artifact read/write. `live-performance.yml` already declares `contents: read` and `actions: read` and uses the built-in `GITHUB_TOKEN` through `GH_TOKEN`.
 3. Change `ref: stock_buy_alert_tgbot` in `test-ipo-universe.yml` to the intended main/default branch, or remove the explicit checkout ref so the workflow tests the selected branch. Otherwise that workflow can fail before running project code.
 4. Keep the workflow's Python 3.12 and install from the checked-in `requirements.txt`.
-5. Treat the scheduled live job as a long-running external-data job: Upstox access, Yahoo Finance access, Nifty/NSE source access, and Telegram access must be available from GitHub-hosted runners. The live job is scheduled at 09:10 IST but intentionally waits for the 09:15 IST market open.
+5. Treat the manually started live job as a long-running external-data job: Upstox access, Yahoo Finance access, Nifty/NSE source access, and Telegram access must be available from GitHub-hosted runners. The live job waits until 09:15 IST after it is started.
 6. Run `test_live_engine.py` manually after merging. It is the only automated Python test file currently wired to project behavior; the Telegram and IPO workflows are integration/smoke checks.
 
 ## Repository Map
@@ -195,6 +255,9 @@ Before enabling this reference branch in the main branch:
 | `scanner/engine.py` | Historical per-stock metrics, candidate score, and BUY filters |
 | `scanner/live_engine.py` | Completed-bar state and per-tick signal evaluation |
 | `scanner/live_data.py` | Live market-cap lookup, Smallcap 250 instrument lookup, and intraday candle requests |
+| `swing_performance.py` | Persistent alert performance calculation until exit |
+| `artifacts/` | Versioned latest swing-performance CSV |
+| `docs/stock-pattern-lab.html` | Standalone shareable web-format overview |
 | `scanner/alerts.py` | Telegram dispatch and batch alert formatting |
 | `config/settings.py` | Credentials and scanner thresholds |
 | `test_telegram.py` | Manual Telegram connectivity check |

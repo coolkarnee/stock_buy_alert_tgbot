@@ -8,6 +8,7 @@ import pandas as pd
 import live_monitor
 from config import settings
 from scanner import live_data, live_engine
+from scanner.alerts import tradingview_chart_url
 
 
 class MomentumTests(unittest.TestCase):
@@ -180,6 +181,12 @@ class MomentumTests(unittest.TestCase):
         self.assertIn("ORB break: 3m", message)
         self.assertIn("warning only", message)
         self.assertIn("NIFTYSMLCAP250", message)
+
+    def test_tradingview_chart_url_uses_nse_symbol(self):
+        self.assertEqual(
+            tradingview_chart_url("POONAWALLA"),
+            "https://www.tradingview.com/chart/?symbol=NSE%3APOONAWALLA",
+        )
 
     def test_intraday_api_endpoint_and_candle_parsing(self):
         with patch.object(live_data, "_request_json", return_value={"data": {"candles": [

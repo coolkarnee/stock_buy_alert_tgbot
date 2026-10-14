@@ -253,7 +253,7 @@ def run():
                             f'{result["price"]:.2f}',
                             f'{result["pivot"]:.2f}',
                         ])
-                    send(fmt_alert("EP", result))
+                    send(fmt_alert("EP", result), chart_symbol=result["symbol"])
                 if result["buy"] and alert_key not in sent_buy:
                     sent_buy.add(alert_key)
                     with alert_log.open("a", newline="", encoding="utf-8") as f:
@@ -265,7 +265,7 @@ def run():
                             f'{result["price"]:.2f}',
                             f'{result["pivot"]:.2f}',
                         ])
-                    send(fmt_alert("BUY", result))
+                    send(fmt_alert("BUY", result), chart_symbol=result["symbol"])
                 if result["buy"]:
                     continue
                 eligible = all(passed for name, passed in result["checks"].items()

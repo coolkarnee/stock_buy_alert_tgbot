@@ -192,6 +192,8 @@ The live monitor sends Momentum BUY and Episodic Pivot BUY messages, at most onc
 
 Telegram delivery uses the Telegram Bot API `sendMessage` endpoint. A non-success response or request exception is printed and processing continues. Missing Telegram credentials cause the message to be printed locally.
 
+Stock Telegram alerts include an `Open TradingView Chart` inline button. The button uses the cross-platform HTTPS URL `https://www.tradingview.com/chart/?symbol=NSE%3ASYMBOL`, which opens the chart in the TradingView app when the device handles the link there, or in the browser otherwise. The exchange-qualified symbol avoids ambiguity for NSE stocks. The same link is used by live Momentum/EP alerts and batch BUY alerts.
+
 ## Swing Performance
 
 The live monitor records each Momentum BUY and Episodic Pivot BUY with ticker, buy price, pivot-based SL, alert type, date, and time in `live_alerts.csv`. The `swing_performance.py` job merges the current day's alerts with the committed history in `artifacts/swing_performance.csv` and recalculates every row.

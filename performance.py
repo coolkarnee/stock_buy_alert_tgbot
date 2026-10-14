@@ -21,7 +21,9 @@ def _move_pct(price, reference):
 def run():
     alert_file = Path("live_alerts.csv")
     if not alert_file.exists():
-        send("📊 LIVE ALERT PERFORMANCE\nNo live BUY alert log was found for today.")
+        report = "📊 LIVE ALERT PERFORMANCE\nNo live BUY alert log was found for today."
+        print(report)
+        send(report)
         return
 
     today_date = datetime.now(IST).date()
@@ -34,7 +36,9 @@ def run():
                 alerts.append(row)
 
     if not alerts:
-        send(f"📊 LIVE ALERT PERFORMANCE | {today}\nNo BUY alerts today.")
+        report = f"📊 LIVE ALERT PERFORMANCE | {today}\nNo BUY alerts today."
+        print(report)
+        send(report)
         return
 
     universe = load_nse_equities()
@@ -196,7 +200,11 @@ def run():
     if len(summary) > 1:
         lines.extend(summary)
 
-    send("\n".join(lines))
+    report = "\n".join(lines)
+    # Keep the result visible in the GitHub Actions log even when Telegram
+    # delivery is unavailable or rejected by the API.
+    print(report)
+    send(report)
 
     with Path("performance.csv").open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)

@@ -10,7 +10,7 @@ from openpyxl import load_workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
 from scanner.alerts import send_document
-from scanner.upstox import historical_daily, load_nse_equities
+from scanner.upstox import current_day_daily, historical_daily, load_nse_equities
 from scanner.indicators import ema
 
 ARTIFACT_DIR = Path("artifacts")
@@ -202,9 +202,33 @@ def _evaluate_alert(alert, key):
     try:
         daily = historical_daily(key, years=2)
         if daily.empty:
-            return {**base, "Status": "NO DATA"}
+            daily = pd.DataFrame(
+                columns=["timestamp", "open", "high", "low", "close", "volume", "oi"]
+            )
         daily["date"] = pd.to_datetime(daily["timestamp"], errors="coerce").dt.date
         daily = daily.dropna(subset=["date"]).sort_values("date").copy()
+
+        # The historical endpoint can omit the still-recent/current session.
+        # Add Upstox's current-day candle so a same-day alert is evaluated
+        # against today's close instead of producing blank performance fields.
+        current = pd.DataFrame()
+        if alert_date == report_date or report_date not in set(daily["date"]):
+            try:
+                current = current_day_daily(key)
+            except Exception as exc:
+                print(f"[{symbol}] current-day candle lookup failed: {exc}")
+        if not current.empty:
+            current["date"] = pd.to_datetime(
+                current["timestamp"], errors="coerce"
+            ).dt.date
+            current = current.dropna(subset=["date"])
+            current = current[current["date"] >= alert_date]
+            if not current.empty:
+                known_dates = set(daily["date"])
+                daily = pd.concat(
+                    [daily, current[~current["date"].isin(known_dates)]],
+                    ignore_index=True,
+                ).sort_values("date")
         daily["ema10"] = ema(daily["close"], 10)
         daily["ema21"] = ema(daily["close"], 21)
         window = daily[daily["date"] >= alert_date]

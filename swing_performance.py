@@ -183,6 +183,11 @@ def _format_date(value):
     return value.isoformat() if value is not None else ""
 
 
+def _ist_dates(values):
+    """Convert Upstox timestamps to Indian calendar dates."""
+    return pd.to_datetime(values, errors="coerce", utc=True).dt.tz_convert(IST).dt.date
+
+
 def _evaluate_alert(alert, key):
     symbol = alert["Ticker Name"]
     buy_price = _float(alert["Buy Price"])
@@ -205,7 +210,7 @@ def _evaluate_alert(alert, key):
             daily = pd.DataFrame(
                 columns=["timestamp", "open", "high", "low", "close", "volume", "oi"]
             )
-        daily["date"] = pd.to_datetime(daily["timestamp"], errors="coerce").dt.date
+        daily["date"] = _ist_dates(daily["timestamp"])
         daily = daily.dropna(subset=["date"]).sort_values("date").copy()
 
         # The historical endpoint can omit the still-recent/current session.
@@ -218,9 +223,7 @@ def _evaluate_alert(alert, key):
             except Exception as exc:
                 print(f"[{symbol}] current-day candle lookup failed: {exc}")
         if not current.empty:
-            current["date"] = pd.to_datetime(
-                current["timestamp"], errors="coerce"
-            ).dt.date
+            current["date"] = _ist_dates(current["timestamp"])
             current = current.dropna(subset=["date"])
             current = current[current["date"] >= alert_date]
             if not current.empty:

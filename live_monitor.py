@@ -190,6 +190,7 @@ def fmt_alert(kind, r):
         return (
             f"EPISODIC PIVOT BUY - {r['symbol']}\n"
             f"Price Rs {r['price']:.2f} | Gap {(r['day_open'] / r['prev_close'] - 1) * 100:+.2f}%\n"
+            f"Prev Day Low SL Rs {r['prev_low']:.2f}\n"
             f"ATR {r['atr_pct']:.2f}% | Turnover Rs {r['turnover_cr']:.1f} Cr\n"
             f"{benchmark}: {market}"
         )
@@ -204,7 +205,7 @@ def fmt_alert(kind, r):
     volume_line = f"\n{' | '.join(orb_and_volume)}" if orb_and_volume else ""
     return (
         f"MOMENTUM BUY - {r['symbol']}\n"
-        f"Price Rs {r['price']:.2f} | PDC SL Rs {r['pivot']:.2f}\n"
+        f"Price Rs {r['price']:.2f} | Prev Day Low SL Rs {r['prev_low']:.2f}\n"
         f"Gap {(r['day_open'] / r['prev_close'] - 1) * 100:+.2f}% | "
         f"Move {r['intraday_move']:+.2f}% from open | {r['intraday_move_from_low']:+.2f}% from low\n"
         f"ATR {r['atr_pct']:.2f}% | Turnover Rs {r['turnover_cr']:.1f} Cr\n"
@@ -224,7 +225,7 @@ def run():
     with alert_log.open("w", newline="", encoding="utf-8") as f:
         csv.writer(f).writerow([
             "alert_date", "alert_time_ist", "alert_type", "symbol",
-            "alert_price", "sl_price",
+            "alert_price", "sl_price", "market_context",
         ])
     universe = load_nse_equities()
     benchmark_name = "NIFTY 500"
@@ -422,7 +423,8 @@ def run():
                             "EP",
                             result["symbol"],
                             f'{result["price"]:.2f}',
-                            f'{result["pivot"]:.2f}',
+                            f'{result["prev_low"]:.2f}',
+                            result.get("market_regime", ""),
                         ])
                     send(fmt_alert("EP", result), chart_symbol=result["symbol"])
                 if result["buy"] and alert_key not in sent_buy:
@@ -434,7 +436,8 @@ def run():
                             "BUY",
                             result["symbol"],
                             f'{result["price"]:.2f}',
-                            f'{result["pivot"]:.2f}',
+                            f'{result["prev_low"]:.2f}',
+                            result.get("market_regime", ""),
                         ])
                     send(fmt_alert("BUY", result), chart_symbol=result["symbol"])
                 if result["buy"]:

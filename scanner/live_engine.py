@@ -59,6 +59,7 @@ def build_state(symbol, df, nifty_df):
         "prev_open": float(previous.open),
         "prev_close": float(previous.close),
         "prev_high": float(previous.high),
+        "prev_low": float(previous.low),
         "dark_red_previous_candle": dark_red_previous_candle,
         "pivot": float(breakout_reference) * (
             1 + settings.BREAKOUT_BUFFER_PCT / 100
@@ -237,6 +238,7 @@ def evaluate(state, quote):
         "price": price,
         "volume": volume,
         "day_open": day_open,
+        "day_low": day_low,
         "avg_turnover10_cr": state["avg_turnover10_cr"],
         "turnover_raw": turnover_raw,
         "turnover_cr": turnover_cr,

@@ -35,7 +35,7 @@
   <div class="grid">
     <section class="card"><h3>Momentum BUY</h3><p>All ten Momentum BUY conditions must pass, including trend, volume confirmation, momentum, breakout, rally strength, near-high, volatility, price, liquidity, and ORB.</p></section>
     <section class="card"><h3>Episodic Pivot BUY</h3><p>An independent five-condition alert for a gap above 5%, price above developing EMA21, price above ₹20, ATR qualification, and liquidity.</p></section>
-    <section class="card"><h3>Swing performance</h3><p>Every alert is retained until entry-day SL, a daily close below 10 EMA, or a daily close below 21 EMA. Open rows are marked through the report date.</p></section>
+    <section class="card"><h3>Swing performance</h3><p>Every alert uses the previous trading day's low as the initial SL. A +10% move in Bear/Choppy context or +15% in Bull context books part of the position; the remainder trails on daily 10 EMA/breakeven, then 20 EMA. Rows are marked as Trade open, Partial exit, or Full exit through the report date.</p></section>
   </div>
 
   <h2>When will a Telegram BUY alert fire?</h2>
@@ -94,10 +94,11 @@
       <tr><td>Performance As Of Date</td><td>Date through which the report was computed.</td></tr>
       <tr><td>Ticker Name / Buy Price / Entry Day SL</td><td>Alert trade reference values.</td></tr>
       <tr><td>Alert Type / Alert Date / Alert Time</td><td>Momentum or EP category and entry timestamp.</td></tr>
-      <tr><td>SL Hit Date / SL Type</td><td>First exit date and whether it was entry-day SL, 10 EMA break, or 21 EMA break. Open rows show “Open as of report date”.</td></tr>
+      <tr><td>SL Hit Date / SL Type</td><td>Latest action date and whether it was previous-day-low SL, breakeven SL, profit booking, 10 DEMA closing-basis action, or 20 DEMA closing-basis exit.</td></tr>
       <tr><td>Holding Days</td><td>Trading sessions from alert through exit, or through the report date while open.</td></tr>
       <tr><td>Performance %</td><td>Return from buy price to exit price, or latest close while open.</td></tr>
-      <tr><td>Status</td><td><code>EXITED</code>, <code>OPEN</code>, or a data/error status.</td></tr>
+      <tr><td>Status</td><td><code>Trade open</code>, <code>Partial exit</code>, <code>Full exit</code>, or a data/error status.</td></tr>
+      <tr><td>Market Context</td><td>Entry context: Bull Market, Bear Market, or Choppy Market. It controls the profit-booking threshold and size.</td></tr>
     </tbody>
   </table>
 

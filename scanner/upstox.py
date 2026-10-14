@@ -84,10 +84,14 @@ def load_nse_equities():
 def find_nifty500_key():
     data=load_instruments()
     candidates=[x for x in data if x.get('segment')=='NSE_INDEX'
-                and str(x.get('trading_symbol','')).upper().replace(' ','') in {'NIFTY500','CNX500'}]
-    if not candidates:
-        raise RuntimeError('Nifty 500 index instrument was not found in the Upstox instrument master.')
-    return candidates[0].get('instrument_key')
+                and x.get('instrument_type') == 'INDEX'
+                and str(x.get('trading_symbol','')).upper() == 'NIFTY 500']
+    if len(candidates) != 1:
+        raise RuntimeError(
+            'Expected exactly one Upstox NSE_INDEX NIFTY 500; '
+            f'found {len(candidates)}.'
+        )
+    return candidates[0]['instrument_key']
 
 def historical_daily(key,years=2):
     end=date.today()

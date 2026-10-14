@@ -8,11 +8,18 @@ from scanner.upstox import BASE, _request_json, load_instruments
 
 
 def find_smallcap250_key():
-    for instrument in load_instruments():
-        name = str(instrument.get("trading_symbol", "")).upper().replace(" ", "")
-        if instrument.get("segment") == "NSE_INDEX" and name in {"NIFTYSMLCAP250", "NIFTYSMALLCAP250"}:
-            return instrument["instrument_key"]
-    raise RuntimeError("Nifty Smallcap 250 was not found in the Upstox instrument master.")
+    matches = [
+        instrument for instrument in load_instruments()
+        if instrument.get("segment") == "NSE_INDEX"
+        and instrument.get("instrument_type") == "INDEX"
+        and str(instrument.get("trading_symbol", "")).upper() == "NIFTY SMLCAP 250"
+    ]
+    if len(matches) != 1:
+        raise RuntimeError(
+            "Expected exactly one Upstox NSE_INDEX NIFTY SMLCAP 250; "
+            f"found {len(matches)}."
+        )
+    return matches[0]["instrument_key"]
 
 
 def market_cap_cr(symbol):

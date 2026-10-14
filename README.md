@@ -9,8 +9,8 @@ This repository is an alert-only scanner. It does not place orders or manage pos
 | Entry point | Behavior |
 | --- | --- |
 | `main.py` | Downloads the current universe and about two years of daily history, evaluates each stock, prints a scan summary, sends Telegram alerts for BUY results, and writes `scan_results.csv` if there are results or per-symbol failures to report. |
-| `live_monitor.py` | Builds historical reference state, connects to the Upstox V3 full-market WebSocket, evaluates live quotes each second, and sends at most one Momentum BUY and one Episodic Pivot BUY alert per symbol per day within that process. |
-| `performance.py` | Reads the live alert CSV, fetches the day's close and post-alert intraday high, sends a Telegram summary, and writes `performance.csv`. |
+| `live_monitor.py` | Builds historical reference state, sends a first market-open summary for six indices followed by a TradingView India market-breadth snapshot, connects to the Upstox V3 full-market WebSocket, evaluates live quotes each second, sends a final market-close summary, and sends at most one Momentum BUY and one Episodic Pivot BUY alert per symbol per day within that process. |
+| `performance.py` | Reads the live alert CSV, fetches the day's close and post-alert intraday high, sends a Telegram summary, writes `performance.csv`, and saves a concise conclusion for the next market-open summary. |
 | `swing_performance.py` | Recomputes the persistent swing-performance sheet for every live alert until the first daily SL/EMA break. |
 | `test_live_engine.py` | Offline automated tests for momentum rules, IPO exemptions, ORB candles, feed parsing, and mocked Telegram dispatch. |
 | `test_telegram.py` | Sends a fixed Telegram connectivity test message. This is a manual smoke test, not an automated test suite. |
@@ -174,7 +174,7 @@ EP alerts do not require Momentum BUY volume confirmation, momentum, breakout, r
 
 Stocks with fewer than 252 completed daily candles are treated as IPOs: rally and ATR checks auto-pass, and proximity must be within 15% of the listing high. This uses available history as a listing-age proxy; incomplete provider history may therefore misclassify a stock. A first-day listing without a previous daily candle cannot be evaluated against yesterday's close.
 
-EMA10/EMA21 extension is shown in alerts but is not a blocking filter by default. Set `LIVE_BLOCK_EXTENDED=True` to require at most 10% above EMA10 and 20% above EMA21. Prior three-session average volume below the preceding 20-session average is informational only and never blocks a BUY. The selected NIFTY Smallcap 250 or Nifty 500 market context is also informational and never blocks alerts.
+EMA10/EMA21 extension is shown in alerts but is not a blocking filter by default. Set `LIVE_BLOCK_EXTENDED=True` to require at most 10% above EMA10 and 20% above EMA21. Prior three-session average volume below the preceding 20-session average is informational only and never blocks a BUY. The exact NIFTY 500 market context is informational and never blocks alerts. The market summary uses exact Upstox records only; unavailable index values are shown as `NA`, with a fetched count when fewer than six are available.
 
 RVOL projects cumulative volume to a 375-minute session using elapsed session time and the preceding 20-session average. Turnover uses actual cumulative volume, not projected volume. Live EMA and ATR incorporate the developing daily candle, so they may change before the close.
 

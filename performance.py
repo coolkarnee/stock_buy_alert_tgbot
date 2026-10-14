@@ -12,6 +12,10 @@ from scanner.upstox import load_nse_equities, current_day_daily
 IST = ZoneInfo("Asia/Kolkata")
 
 
+def write_summary(text):
+    Path("performance_summary.txt").write_text(text.strip() + "\n", encoding="utf-8")
+
+
 def _move_pct(price, reference):
     if reference is None or price <= 0:
         return None
@@ -24,6 +28,7 @@ def run():
         report = "📊 LIVE ALERT PERFORMANCE\nNo live BUY alert log was found for today."
         print(report)
         send(report)
+        write_summary("No BUY alerts were recorded, so there is no intraday performance conclusion.")
         return
 
     today_date = datetime.now(IST).date()
@@ -39,6 +44,7 @@ def run():
         report = f"📊 LIVE ALERT PERFORMANCE | {today}\nNo BUY alerts today."
         print(report)
         send(report)
+        write_summary("No BUY alerts were recorded, so there is no intraday performance conclusion.")
         return
 
     universe = load_nse_equities()
@@ -200,11 +206,23 @@ def run():
     if len(summary) > 1:
         lines.extend(summary)
 
+    if close_moves:
+        close_green = sum(x >= 0 for x in close_moves)
+        close_red = sum(x < 0 for x in close_moves)
+        conclusion = (
+            f"{close_green}/{len(close_moves)} alerts closed positive, "
+            f"{close_red} negative; average close move {sum(close_moves) / len(close_moves):+.2f}%."
+        )
+    else:
+        conclusion = "No alerts had usable completed-close data for an intraday performance conclusion."
+    lines.extend(["", f"Conclusion: {conclusion}"])
+
     report = "\n".join(lines)
     # Keep the result visible in the GitHub Actions log even when Telegram
     # delivery is unavailable or rejected by the API.
     print(report)
     send(report)
+    write_summary(conclusion)
 
     with Path("performance.csv").open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)

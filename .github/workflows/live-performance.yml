@@ -68,5 +68,6 @@ jobs:
           path: |
             performance.csv
             live_alerts.csv
+            performance_summary.txt
           if-no-files-found: warn
           retention-days: 30

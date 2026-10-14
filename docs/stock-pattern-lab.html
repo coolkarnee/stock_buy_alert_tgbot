@@ -83,7 +83,7 @@
     <li><strong>Bear Market:</strong> benchmark below both 10 and 20 EMA.</li>
     <li><strong>Choppy Market:</strong> all other conditions.</li>
   </ul>
-  <p>The scanner tries NIFTY SMLCAP 250 first and falls back to NIFTY 500.</p>
+  <p>The scanner uses the exact NIFTY 500 Upstox index record for stock-alert market context when available. The open and close summaries use exact Upstox records only; unavailable values are shown as <code>NA</code> and the message reports how many of the six indices were fetched.</p>
 
   <h2>Persistent performance sheet</h2>
   <p>After the live alert workflow and daily performance workflow complete, the swing workflow recalculates all stored alerts and commits the latest file to <code>artifacts/swing_performance.csv</code>. It also uploads a downloadable <code>swing-performance-latest</code> artifact.</p>

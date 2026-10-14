@@ -178,9 +178,11 @@ class MomentumTests(unittest.TestCase):
         self.assertTrue(result["buy"])
         message = live_monitor.fmt_alert("BUY", result)
         self.assertIn("MOMENTUM BUY", message)
-        self.assertIn("ORB break: 3m", message)
-        self.assertIn("warning only", message)
-        self.assertIn("NIFTYSMLCAP250", message)
+        self.assertIn("ORB close: 3m", message)
+        self.assertIn("52W HI -", message)
+        self.assertNotIn("warning only", message)
+        self.assertNotIn("Live scanner only", message)
+        self.assertIn("NIFTY 500", message)
 
     def test_tradingview_chart_url_uses_nse_symbol(self):
         self.assertEqual(

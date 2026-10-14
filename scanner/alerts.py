@@ -1,4 +1,5 @@
 from urllib.parse import quote
+from pathlib import Path
 
 import requests
 from config import settings
@@ -58,6 +59,36 @@ def send(message, chart_symbol=None):
             except Exception as exc:
                 print(f"Telegram send failed for chat_id={chat_id}: {exc}")
             continue
+
+
+def send_document(path, caption=None):
+    """Send a local file to every configured Telegram chat."""
+    document = Path(path)
+    if not settings.TELEGRAM_BOT_TOKEN or not settings.TELEGRAM_CHAT_ID:
+        print(f"Telegram document ready: {document}")
+        if caption:
+            print(caption)
+        return
+
+    for chat_id in _chat_ids():
+        try:
+            with document.open("rb") as handle:
+                response = requests.post(
+                    f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/sendDocument",
+                    data={"chat_id": chat_id, "caption": str(caption or "")},
+                    files={
+                        "document": (
+                            document.name,
+                            handle,
+                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        )
+                    },
+                    timeout=60,
+                )
+            if not response.ok:
+                print(f"Telegram document send failed for chat_id={chat_id}: HTTP {response.status_code} | {response.text}")
+        except Exception as exc:
+            print(f"Telegram document send failed for chat_id={chat_id}: {exc}")
 
 def format_result(r,state):
     return f"{state} | {r['symbol']}\nPrice ₹{r['price']:.2f} | Score {r['score']}/7\nPivot ₹{r['pivot']:.2f} | ATR {r['atr_pct']:.1f}%\nRS20 {r['rs20']:.1f}% | 52W distance {r['from_52w_high']:.1f}%\nSwing {r['swing_return']:.1f}% | RVOL {r['rvol']:.1f}x\nVCP={r['vcp']} | Breakout={r['vcp_breakout']} | Pocket Pivot={r['pocket_pivot']}"

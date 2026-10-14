@@ -6,12 +6,16 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pandas as pd
+from openpyxl import load_workbook
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
+from scanner.alerts import send_document
 from scanner.upstox import historical_daily, load_nse_equities
 from scanner.indicators import ema
 
 ARTIFACT_DIR = Path("artifacts")
 OUTPUT_FILE = ARTIFACT_DIR / "swing_performance.csv"
+EXCEL_FILE = ARTIFACT_DIR / "swing_performance.xlsx"
 ALERT_FILE = Path("live_alerts.csv")
 IST = ZoneInfo("Asia/Kolkata")
 
@@ -30,6 +34,91 @@ OUTPUT_COLUMNS = [
     "Performance %",
     "Status",
 ]
+
+
+def _write_excel(frame):
+    """Write a readable, filtered workbook for Telegram and workflow download."""
+    report = frame[OUTPUT_COLUMNS].copy()
+    report_date = datetime.now(IST).date().isoformat()
+    total = len(report)
+    open_count = int((report["Status"] == "OPEN").sum()) if total else 0
+    exited_count = int((report["Status"] == "EXITED").sum()) if total else 0
+    valid_performance = pd.to_numeric(report["Performance %"], errors="coerce")
+    average_performance = valid_performance.mean()
+
+    with pd.ExcelWriter(EXCEL_FILE, engine="openpyxl") as writer:
+        summary = pd.DataFrame([
+            ["Performance as of", report_date],
+            ["Total alerts", total],
+            ["Open alerts", open_count],
+            ["Exited alerts", exited_count],
+            ["Average performance", "" if pd.isna(average_performance) else f"{average_performance:+.2f}%"],
+        ], columns=["Metric", "Value"])
+        summary.to_excel(writer, sheet_name="Summary", index=False)
+        report.to_excel(writer, sheet_name="Swing Performance", index=False)
+
+    workbook = load_workbook(EXCEL_FILE)
+    header_fill = PatternFill("solid", fgColor="1F4E78")
+    header_font = Font(color="FFFFFF", bold=True)
+    border = Border(bottom=Side(style="thin", color="D9E2F3"))
+
+    summary_sheet = workbook["Summary"]
+    summary_sheet.sheet_properties.tabColor = "1F4E78"
+    detail_sheet = workbook["Swing Performance"]
+    detail_sheet.sheet_properties.tabColor = "70AD47"
+
+    for sheet in (summary_sheet, detail_sheet):
+        sheet.freeze_panes = "A2"
+        for cell in sheet[1]:
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center")
+        for row in sheet.iter_rows():
+            for cell in row:
+                cell.border = border
+                cell.alignment = Alignment(vertical="top")
+
+    summary_sheet.column_dimensions["A"].width = 25
+    summary_sheet.column_dimensions["B"].width = 22
+    detail_sheet.auto_filter.ref = detail_sheet.dimensions
+    detail_sheet.freeze_panes = "A2"
+    widths = {
+        "A": 26, "B": 20, "C": 18, "D": 13, "E": 14, "F": 13,
+        "G": 13, "H": 13, "I": 14, "J": 22, "K": 13, "L": 15, "M": 15,
+    }
+    for column, width in widths.items():
+        detail_sheet.column_dimensions[column].width = width
+
+    green_fill = PatternFill("solid", fgColor="E2F0D9")
+    red_fill = PatternFill("solid", fgColor="FCE4D6")
+    yellow_fill = PatternFill("solid", fgColor="FFF2CC")
+    for row in range(2, detail_sheet.max_row + 1):
+        status = detail_sheet.cell(row, 13)
+        performance = detail_sheet.cell(row, 12)
+        if status.value == "OPEN":
+            status.fill = yellow_fill
+        elif status.value == "EXITED":
+            status.fill = green_fill if float(performance.value or 0) >= 0 else red_fill
+        try:
+            performance.value = float(performance.value)
+            performance.number_format = '0.00"%"'
+        except (TypeError, ValueError):
+            pass
+
+    workbook.save(EXCEL_FILE)
+    return EXCEL_FILE
+
+
+def _send_excel_report(frame):
+    report_date = datetime.now(IST).date().isoformat()
+    total = len(frame)
+    open_count = int((frame["Status"] == "OPEN").sum()) if total else 0
+    exited_count = int((frame["Status"] == "EXITED").sum()) if total else 0
+    caption = (
+        f"📊 Swing Performance | {report_date}\n"
+        f"Alerts: {total} | Open: {open_count} | Exited: {exited_count}"
+    )
+    send_document(EXCEL_FILE, caption)
 
 
 def _float(value):
@@ -168,7 +257,10 @@ def run():
 
     if not records:
         ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
-        pd.DataFrame(columns=OUTPUT_COLUMNS).to_csv(OUTPUT_FILE, index=False)
+        empty = pd.DataFrame(columns=OUTPUT_COLUMNS)
+        empty.to_csv(OUTPUT_FILE, index=False)
+        _write_excel(empty)
+        _send_excel_report(empty)
         print("No live alerts found; wrote an empty swing performance sheet.")
         return
 
@@ -187,9 +279,11 @@ def run():
         if column not in frame:
             frame[column] = ""
     ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
-    frame[OUTPUT_COLUMNS].sort_values(["Date Time", "Ticker Name"]).to_csv(
-        OUTPUT_FILE, index=False
-    )
+    sort_columns = [column for column in ("Date Time", "Ticker Name") if column in frame]
+    ordered = frame.sort_values(sort_columns) if sort_columns else frame
+    ordered[OUTPUT_COLUMNS].to_csv(OUTPUT_FILE, index=False)
+    _write_excel(ordered[OUTPUT_COLUMNS])
+    _send_excel_report(ordered[OUTPUT_COLUMNS])
     print(f"Wrote {len(frame)} swing performance rows to {OUTPUT_FILE}.")
 
 

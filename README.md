@@ -200,7 +200,7 @@ The live monitor records each Momentum BUY and Episodic Pivot BUY with ticker, b
 
 The report keeps every alert active until the workflow run date unless the first exit is hit: entry-day SL, a daily close below the 10 EMA, or a daily close below the 21 EMA. `SL Type` identifies which exit occurred. If no exit occurs, the row is marked `OPEN` and performance is measured through the report date shown in the first column. The sheet is recalculated and persistently updated whenever the workflow runs. EMA and SL checks use daily bars, so this is a daily-bar retrospective report rather than tick-level execution accounting.
 
-The latest CSV is committed under `artifacts/swing_performance.csv` and uploaded as the `swing-performance-latest` GitHub Actions artifact for convenient download. The swing workflow runs automatically after `NSE Live Alert Performance` completes successfully and can also be started manually.
+The latest CSV remains committed under `artifacts/swing_performance.csv` as the persistent calculation source. Each run also creates a formatted `artifacts/swing_performance.xlsx` workbook with a summary tab, filters, frozen headers, status colors, and performance formatting. The workbook is uploaded as the `swing-performance-latest` GitHub Actions artifact and sent to Telegram as a document. The swing workflow runs automatically after `NSE Live Alert Performance` completes successfully and can also be started manually.
 
 For a shareable web-format overview, open [`docs/stock-pattern-lab.html`](./docs/stock-pattern-lab.html) in a browser or publish it with any static web host.
 
@@ -227,7 +227,7 @@ There are six GitHub Actions workflows. The live alert, live performance, and sw
 | `.github/workflows/daily-scan.yml` | Manual only | Runs `main.py`, then uploads `scan_results.csv` for seven days. Artifact upload fails if the file was not created. The comment mentioning a daily scan is stale; there is no `schedule` trigger in this file. |
 | `.github/workflows/live-alerts.yml` | Manual only | Runs `live_monitor.py`. The process waits until 09:15 IST, monitors until 15:20 IST, and uploads `live_alerts.csv` even when the job fails. A concurrency group cancels an older run on the same branch. |
 | `.github/workflows/live-performance.yml` | After successful live alerts and manual | Downloads the exact triggering `live-alerts.yml` artifact, runs `performance.py`, and uploads the daily report plus alert input for 30 days. |
-| `.github/workflows/swing-performance.yml` | After successful live performance and manual | Downloads the alert input, recalculates all persistent swing rows until exit or report date, commits `artifacts/swing_performance.csv`, and uploads the latest sheet for 90 days. |
+| `.github/workflows/swing-performance.yml` | After successful live performance and manual | Downloads the alert input, recalculates all persistent swing rows until exit or report date, commits `artifacts/swing_performance.csv`, uploads the formatted Excel workbook for 90 days, and sends it to Telegram. |
 | `.github/workflows/test-ipo-universe.yml` | Manual only | Checks out the hard-coded `Nilesh_branch_to_add_ipos` branch, installs dependencies, and calls the Upstox IPO API to print listed IPO symbols since 2026-01-01. It is not a main-branch test until its checkout ref is changed. |
 | `.github/workflows/test-telegram.yml` | Manual only | Runs the fixed Telegram connectivity message. |
 

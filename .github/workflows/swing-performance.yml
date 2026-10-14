@@ -48,6 +48,8 @@ jobs:
         run: python -u swing_performance.py
         env:
           UPSTOX_ACCESS_TOKEN: ${{ secrets.UPSTOX_ACCESS_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
       - name: Commit latest performance history
         if: ${{ github.event_name == 'workflow_run' }}
@@ -68,6 +70,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: swing-performance-latest
-          path: artifacts/swing_performance.csv
+          path: artifacts/swing_performance.xlsx
           if-no-files-found: error
           retention-days: 90

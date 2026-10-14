@@ -8,6 +8,18 @@ from scanner.indicators import ema
 
 IST = ZoneInfo("Asia/Kolkata")
 ORB_WINDOWS = (3, 5, 15, 30, 60)
+MAX_SL_DISTANCE_PCT = 6.0
+PORTFOLIO_RISK_PCT = 1.0
+MAX_POSITION_SIZE_PCT = 25.0
+SWING_MOVE_RULES = (
+    ("1W", 5, 10.0),
+    ("1M", 21, 19.0),
+    ("3M", 63, 29.0),
+    ("6M", 126, 49.0),
+    ("1Y", 252, 99.0),
+    ("18M", 378, 149.0),
+    ("24M", 504, 199.0),
+)
 
 
 def _completed(df):
@@ -42,6 +54,11 @@ def build_state(symbol, df, nifty_df):
     market_above_ema = None
     if len(benchmark) >= 21:
         market_above_ema = bool(benchmark.close.iloc[-1] > ema(benchmark.close, 21).iloc[-1])
+    swing_move_references = {
+        label: float(history.close.iloc[-period])
+        if len(history) >= period else None
+        for label, period, _ in SWING_MOVE_RULES
+    }
     return {
         "symbol": symbol,
         "history_days": len(history),
@@ -65,6 +82,7 @@ def build_state(symbol, df, nifty_df):
             1 + settings.BREAKOUT_BUFFER_PCT / 100
         ),
         "market_above_ema": market_above_ema,
+        "swing_move_references": swing_move_references,
         "orb_highs": {},
         "orb_close_breaks": {},
         "first30_volume": None,
@@ -213,18 +231,35 @@ def evaluate(state, quote):
         else min(state["prev_high"], state["prev_close"])
     )
     breakout = price > breakout_reference * (1 + settings.BREAKOUT_BUFFER_PCT / 100)
+    swing_moves = {
+        label: (price / reference - 1) * 100
+        if reference is not None else None
+        for label, reference in state["swing_move_references"].items()
+    }
+    swing_move_condition = state["is_ipo"] or any(
+        reference is not None and (price / reference - 1) * 100 > threshold
+        for label, _, threshold in SWING_MOVE_RULES
+        for reference in [state["swing_move_references"].get(label)]
+    )
+    sl_distance_pct = (price - state["prev_low"]) / price * 100
+    sl_risk_valid = 0 < sl_distance_pct <= MAX_SL_DISTANCE_PCT
+    position_size_pct = (
+        min(MAX_POSITION_SIZE_PCT, PORTFOLIO_RISK_PCT * 100 / sl_distance_pct)
+        if sl_risk_valid else None
+    )
     checks = {
         "trend": state["history_days"] + 1 <= 21 or price > current_ema21,
         "extension": not getattr(settings, "LIVE_BLOCK_EXTENDED", False) or (extension10 <= 10 and extension21 <= 20),
         "volume_surge": rvol_condition or pocket or first30_surge or intraday_move_condition or daily_volume_condition,
         "momentum": price > state["prev_close"],
         "breakout": breakout,
-        "strength": state["is_ipo"] or swing >= settings.MIN_SWING_RETURN,
+        "strength": swing_move_condition,
         "near_high": from_high <= (15 if state["is_ipo"] else settings.MAX_FROM_52W_HIGH),
         "volatility": state["is_ipo"] or atr_pct > settings.MIN_ATR_PCT,
         "price_floor": price > settings.MIN_PRICE,
         "liquidity": liquidity_condition,
         "orb": bool(orb_windows),
+        "sl_risk": sl_risk_valid,
     }
     episodic_pivot = (
         day_open > state["prev_close"] * 1.05 and
@@ -239,6 +274,8 @@ def evaluate(state, quote):
         "volume": volume,
         "day_open": day_open,
         "day_low": day_low,
+        "sl_distance_pct": sl_distance_pct,
+        "position_size_pct": position_size_pct,
         "avg_turnover10_cr": state["avg_turnover10_cr"],
         "turnover_raw": turnover_raw,
         "turnover_cr": turnover_cr,
@@ -252,6 +289,7 @@ def evaluate(state, quote):
         "atr_pct": atr_pct,
         "from_high": from_high,
         "swing": swing,
+        "swing_moves": swing_moves,
         "extension10": extension10,
         "extension21": extension21,
         "pocket_pivot": bool(pocket),

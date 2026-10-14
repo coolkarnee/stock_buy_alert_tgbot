@@ -24,16 +24,25 @@
     th,td { text-align:left; vertical-align:top; border:1px solid var(--line); padding:10px 12px; }
     th { background:#eaf0fb; }
     .note { border-left:4px solid var(--accent); padding:10px 16px; background:#edf4ff; }
+    .hero { background:linear-gradient(135deg,#155eef,#6438d6); color:#fff; border-radius:20px; padding:28px; box-shadow:0 12px 30px #155eef30; }
+    .hero .lead { color:#e7edff; }
+    .formula { background:#172033; color:#eef4ff; border-radius:12px; padding:16px 18px; overflow:auto; font:600 15px/1.7 ui-monospace,SFMono-Regular,Menlo,monospace; }
+    .badge { display:inline-block; border-radius:999px; padding:3px 10px; background:#e8f7ef; color:var(--green); font-size:.82rem; font-weight:700; }
+    .table-wrap { overflow-x:auto; border-radius:12px; box-shadow:0 4px 18px #1b2a4810; }
+    .table-wrap table { min-width:620px; }
     footer { color:var(--muted); margin-top:48px; font-size:.92rem; }
   </style>
 </head>
 <body>
 <main>
-  <h1>Stock Pattern Lab</h1>
-  <p class="lead">An alert-only NSE equity scanner using Upstox market data. It sends Telegram alerts, places no orders, and maintains a persistent swing-performance report.</p>
+  <section class="hero">
+    <span class="badge">NSE · Upstox · Telegram</span>
+    <h1>Stock Pattern Lab</h1>
+    <p class="lead">A transparent alert-only scanner for Momentum BUY and Episodic Pivot BUY signals, with explicit swing-strength and portfolio-risk rules.</p>
+  </section>
 
   <div class="grid">
-    <section class="card"><h3>Momentum BUY</h3><p>All ten Momentum BUY conditions must pass, including trend, volume confirmation, momentum, breakout, rally strength, near-high, volatility, price, liquidity, and ORB.</p></section>
+    <section class="card"><h3>Momentum BUY</h3><p>Every live strength, breakout, liquidity, opening-range, swing-period, and SL-risk condition must pass.</p></section>
     <section class="card"><h3>Episodic Pivot BUY</h3><p>An independent five-condition alert for a gap above 5%, price above developing EMA21, price above ₹20, ATR qualification, and liquidity.</p></section>
     <section class="card"><h3>Swing performance</h3><p>Every alert uses the previous trading day's low as the initial SL. A +10% move in Bear/Choppy context or +15% in Bull context books part of the position; the remainder trails on daily 10 EMA/breakeven, then 20 EMA. Rows are marked as Trade open, Partial exit, or Full exit through the report date.</p></section>
   </div>
@@ -50,18 +59,42 @@
   <p>Telegram delivery requires the Telegram settings. Without them, the alert appears in the workflow log.</p>
 
   <h2>Momentum BUY conditions</h2>
-  <ol>
-    <li>Price is above developing EMA21, except during the first 21 listing days.</li>
-    <li>At least one volume confirmation: RVOL &gt; 1.30x, pocket pivot, first-30-minute surge, price up at least 4% from open, or daily volume &gt; 9M.</li>
-    <li>Price is above yesterday's close.</li>
-    <li>Price exceeds the breakout reference by the 0.50% buffer.</li>
-    <li>Rally from the 52-week low is at least 30%, except IPOs.</li>
-    <li>Price is within 20% of the 52-week high, or within 15% for IPOs.</li>
-    <li>ATR is above 3.9%, except IPOs.</li>
-    <li>Price is strictly above ₹20.</li>
-    <li>Turnover/liquidity is strictly above ₹20 Cr.</li>
-    <li>Price breaks at least one 3m, 5m, 15m, 30m, or 60m opening range.</li>
-  </ol>
+  <p>All mandatory conditions must pass at the same time:</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Condition</th><th>Requirement</th></tr></thead>
+    <tbody>
+      <tr><td>Trend</td><td>Price above developing EMA21, except through listing day 21.</td></tr>
+      <tr><td>Volume</td><td>RVOL &gt;1.30x, pocket pivot, first-30-minute surge, price up ≥4% from open, or daily volume &gt;9M.</td></tr>
+      <tr><td>Momentum</td><td>Price above yesterday's close.</td></tr>
+      <tr><td>Breakout</td><td>Price above the previous-session reference with a 0.50% buffer.</td></tr>
+      <tr><td>Near high</td><td>Within 20% of the 52-week high, or 15% for IPOs.</td></tr>
+      <tr><td>Volatility</td><td>ATR14 &gt;3.9%, except IPOs.</td></tr>
+      <tr><td>Price / liquidity</td><td>Price &gt;₹20 and turnover &gt;₹20 Cr.</td></tr>
+      <tr><td>Opening range</td><td>Break at least one completed 3m, 5m, 15m, 30m, or 60m range.</td></tr>
+      <tr><td>SL risk</td><td>Previous-day-low distance is positive and ≤6%.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2>Multi-period swing strength</h2>
+  <p>The old 30% rise-from-52-week-low rule is removed. At least one close-to-close move must be strictly greater than its threshold. IPOs skip this condition.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Period</th><th>Reference close</th><th>Required move</th></tr></thead>
+    <tbody>
+      <tr><td>1 week</td><td>5 sessions ago</td><td><strong>&gt;10%</strong></td></tr>
+      <tr><td>1 month</td><td>21 sessions ago</td><td><strong>&gt;19%</strong></td></tr>
+      <tr><td>3 months</td><td>63 sessions ago</td><td><strong>&gt;29%</strong></td></tr>
+      <tr><td>6 months</td><td>126 sessions ago</td><td><strong>&gt;49%</strong></td></tr>
+      <tr><td>1 year</td><td>252 sessions ago</td><td><strong>&gt;99%</strong></td></tr>
+      <tr><td>18 months</td><td>378 sessions ago</td><td><strong>&gt;149%</strong></td></tr>
+      <tr><td>24 months</td><td>504 sessions ago</td><td><strong>&gt;199%</strong></td></tr>
+    </tbody>
+  </table></div>
+  <p class="note">The scanner keeps its existing two-year history download. A period is tested only when its reference close is available; no three-year history is requested.</p>
+
+  <h2>Previous-day-low risk sizing</h2>
+  <p>Momentum BUY alerts are allowed only when the previous-day-low SL is no more than 6% below entry. The maximum position is capped at 25% of the portfolio.</p>
+  <div class="formula">SL distance % = ((Buy Price − Previous Day Low) / Buy Price) × 100<br>Position Size % = min(25%, 1% / SL distance)</div>
+  <p>Example: a 5% SL distance gives a 20% maximum position. A 4% distance reaches the 25% cap. EP alerts do not use this filter.</p>
 
   <h2>Episodic Pivot BUY</h2>
   <ul>
@@ -83,10 +116,10 @@
     <li><strong>Bear Market:</strong> benchmark below both 10 and 20 EMA.</li>
     <li><strong>Choppy Market:</strong> all other conditions.</li>
   </ul>
-  <p>The scanner uses the exact NIFTY 500 Upstox index record for stock-alert market context when available. The open and close summaries use exact Upstox records only; unavailable values are shown as <code>NA</code> and the message reports how many of the six indices were fetched.</p>
+  <p>The scanner uses the exact NIFTY 500 Upstox index record for stock-alert market context when available. Momentum BUY alerts also require the previous-day-low SL to be no more than 6% below entry; their maximum allocation for 1% portfolio risk is capped at 25%. EP alerts are not subject to this position-size filter. The open and close summaries use exact Upstox records only; unavailable values are shown as <code>NA</code> and the message reports how many of the six indices were fetched.</p>
 
   <h2>Persistent performance sheet</h2>
-  <p>After the live alert workflow and daily performance workflow complete, the swing workflow recalculates all stored alerts and commits the latest file to <code>artifacts/swing_performance.csv</code>. It also uploads a downloadable <code>swing-performance-latest</code> artifact.</p>
+  <p>After the live alert workflow and daily performance workflow complete, the swing workflow recalculates all stored alerts and commits the latest file to <code>artifacts/swing_performance.csv</code>. It also uploads a downloadable <code>swing-performance-latest</code> artifact and sends a Telegram notification when a new Partial exit or Full exit occurs today. The Excel file has an overall dashboard on its first tab and weekly sections on the second tab; each week has a merged centered title, weekly numbering, and repeated headers/descriptions.</p>
   <table>
     <thead><tr><th>CSV column</th><th>Meaning</th></tr></thead>
     <tbody>

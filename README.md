@@ -150,15 +150,50 @@ otherwise: latest close >= max(previous high, previous close) × 1.005
 
 ## Live Momentum BUY Rules
 
-Live selection does not use VCP or the batch candidate score. All mandatory conditions must align:
+Live selection does not use VCP or the batch candidate score. Every mandatory condition below must align:
 
-- Current price is above the developing daily EMA21, except through listing day 21.
-- Volume confirmation is at least one of projected RVOL strictly above 1.3x, a pocket pivot, completed first-30-minute volume above the preceding 10-session average daily volume, price up at least 4% from the open, or daily volume above 9M shares.
-- Price is above yesterday's close and strictly above the lower of yesterday's high and close, with the 0.50% breakout buffer applied. If yesterday's candle closed more than 4% below its open, the live breakout ignores yesterday's close and uses only yesterday's high × 1.005.
-- Rally from the 52-week low is at least 30%; distance from the 52-week high is at most 20%.
-- Developing daily ATR14 is strictly above 3.9% of current price.
-- Price is strictly above Rs 20 and the calculated turnover/liquidity value is strictly above Rs 20 Cr. The repository contains a Yahoo Finance `market_cap_cr()` helper, but `live_engine.evaluate()` does not call it; market capitalization is currently not a live BUY filter.
-- Price is strictly above at least one completed 3m, 5m, 15m, 30m, or 60m opening-range high, measured from 09:15 IST. `OPENING_RANGE_BREAKOUT_MODE="close"` requires a completed candle close above that high; `"spot"` triggers on the live price crossing it.
+| Condition | Live rule |
+| --- | --- |
+| Trend | Price above the developing EMA21, except through listing day 21 |
+| Volume confirmation | At least one of RVOL > 1.30x, pocket pivot, first-30-minute surge, price up ≥4% from open, or daily volume >9M |
+| Momentum | Price above yesterday's close |
+| Breakout | Price above the previous-session reference with a 0.50% buffer |
+| Swing strength | Any qualifying period in the table below; IPOs skip this condition |
+| Near high | Within 20% of the 52-week high, or within 15% for IPOs |
+| Volatility | ATR14 >3.9%, except IPOs |
+| Price | Strictly above ₹20 |
+| Liquidity | Turnover strictly above ₹20 Cr |
+| Opening range | Break at least one completed 3m, 5m, 15m, 30m, or 60m opening range |
+| SL risk | Previous-day-low distance is >0% and ≤6% of entry price |
+
+### Multi-period swing strength
+
+The old 30% rise-from-52-week-low requirement has been removed. Current price is compared with the closing price from each standard trading-session period. **At least one** move must be strictly greater than its threshold:
+
+| Period | Reference close | Required move |
+| --- | ---: | ---: |
+| 1 week | 5 sessions ago | >10% |
+| 1 month | 21 sessions ago | >19% |
+| 3 months | 63 sessions ago | >29% |
+| 6 months | 126 sessions ago | >49% |
+| 1 year | 252 sessions ago | >99% |
+| 18 months | 378 sessions ago | >149% |
+| 24 months | 504 sessions ago | >199% |
+
+Only the existing two-year history request is used. A period qualifies only when its reference close is available; no three-year download is performed. IPOs skip this entire condition.
+
+### Previous-day-low risk and position size
+
+Momentum BUY alerts are sent only when the previous-day-low stop is no more than 6% below entry:
+
+```text
+SL distance % = ((Buy Price − Previous Day Low) / Buy Price) × 100
+Position Size % = min(25%, 1% / SL distance)
+```
+
+Examples: a 5% SL distance gives a 20% maximum position; a 4% distance reaches the 25% cap. The Telegram alert shows the previous-day-low SL and the calculated maximum position size. This filter does not apply to EP alerts.
+
+The breakout reference is the lower of yesterday's high and close, with the 0.50% buffer. If yesterday's candle closed more than 4% below its open, only yesterday's high is used. `OPENING_RANGE_BREAKOUT_MODE="close"` requires a completed candle close above the opening-range high; `"spot"` triggers on the live price crossing it.
 
 ### Episodic Pivot BUY
 
@@ -196,11 +231,11 @@ Stock Telegram alerts include an `Open TradingView Chart` inline button. The but
 
 ## Swing Performance
 
-The live monitor records each Momentum BUY and Episodic Pivot BUY with ticker, buy price, previous-day-low SL, entry market context, alert type, date, and time in `live_alerts.csv`. The `swing_performance.py` job merges the current day's alerts with the committed history in `artifacts/swing_performance.csv` and recalculates every row.
+The live monitor records each Momentum BUY and Episodic Pivot BUY with ticker, buy price, previous-day-low SL, entry market context, alert type, date, and time in `live_alerts.csv`. Momentum BUY alerts are sent only when the previous-day-low distance is positive and no more than 6% below the buy price. Their maximum portfolio allocation for 1% portfolio risk is `min(25%, 1% / SL distance)`. The position-size filter does not apply to EP alerts. The `swing_performance.py` job merges the current day's alerts with the committed history in `artifacts/swing_performance.csv` and recalculates every row.
 
 The report stores the market context at entry and uses the previous trading day's low as the initial SL. In a Bear/Choppy market, a +10% move books 30%; in a Bull market, a +15% move books 20%. The remaining quantity trails at the higher of breakeven and the 10 EMA on daily closing basis. A 10 EMA close break sells 50% of the remaining quantity; a 20 EMA close break or a post-trigger breakeven close break exits the remainder. `Latest Close` is the latest daily close on the `Performance As Of Date`; all SL checks are closing-basis checks. `Performance %` is computed from entry to latest close, with weighted realized and remaining-position return after partial exits. Status values are `Trade open`, `Partial exit`, and `Full exit`. EMA and SL checks use daily bars, so this is a daily-bar retrospective report rather than tick-level execution accounting.
 
-The latest CSV remains committed under `artifacts/swing_performance.csv` as the persistent calculation source. Each run also creates a formatted `artifacts/swing_performance.xlsx` workbook with a summary tab, filters, frozen headers, status colors, and performance formatting. The workbook is uploaded as the `swing-performance-latest` GitHub Actions artifact and sent to Telegram as a document. The swing workflow runs automatically after `NSE Live Alert Performance` completes successfully and can also be started manually.
+The latest CSV remains committed under `artifacts/swing_performance.csv` as the persistent calculation source. Each run also creates a formatted `artifacts/swing_performance.xlsx` workbook with an overall dashboard, ISO-week sections, merged centered week titles, weekly numbering, repeated headers/descriptions, status colors, and performance formatting. The visible workbook hides the internal Alert ID and shows a simple number restarting within each week; the CSV retains Alert ID for persistence and event tracking. When a Partial exit or Full exit is newly recorded with today's action date, the swing workflow sends a Telegram exit alert. The existing Telegram sender splits long messages automatically. The workbook is uploaded as the `swing-performance-latest` GitHub Actions artifact and sent to Telegram as a document. The swing workflow runs automatically after `NSE Live Alert Performance` completes successfully and can also be started manually.
 
 For a shareable web-format overview, open [`docs/stock-pattern-lab.html`](./docs/stock-pattern-lab.html) in a browser or publish it with any static web host.
 
@@ -216,7 +251,7 @@ Environment variables read in `config/settings.py`:
 
 `UPSTOX_MAX_WORKERS` is a Python constant used by live historical-data preparation (default eight), not an environment variable. Batch concurrency is fixed at six in `main.py`.
 
-The screening thresholds and VCP parameters are Python constants in `config/settings.py`, not environment variables. They include `MIN_PRICE=20`, `MIN_TURNOVER_CR=20`, `MIN_SWING_RETURN=30`, `MAX_FROM_52W_HIGH=20`, `MIN_ATR_PCT=3.9`, `MIN_RVOL=1.30`, `BREAKOUT_BUFFER_PCT=0.50`, `DARK_RED_CANDLE_DROP_PCT=4.0`, and `CANDIDATE_SCORE_REQUIRED=4`.
+The screening thresholds and VCP parameters are Python constants in `config/settings.py`, not environment variables. They include `MIN_PRICE=20`, `MIN_TURNOVER_CR=20`, `MAX_FROM_52W_HIGH=20`, `MIN_ATR_PCT=3.9`, `MIN_RVOL=1.30`, `BREAKOUT_BUFFER_PCT=0.50`, `DARK_RED_CANDLE_DROP_PCT=4.0`, and `CANDIDATE_SCORE_REQUIRED=4`.
 
 ## Automation
 

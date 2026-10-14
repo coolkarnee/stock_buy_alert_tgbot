@@ -206,6 +206,7 @@ def fmt_alert(kind, r):
     return (
         f"MOMENTUM BUY - {r['symbol']}\n"
         f"Price Rs {r['price']:.2f} | Prev Day Low SL Rs {r['prev_low']:.2f}\n"
+        f"Max Position {r['position_size_pct']:.2f}%\n"
         f"Gap {(r['day_open'] / r['prev_close'] - 1) * 100:+.2f}% | "
         f"Move {r['intraday_move']:+.2f}% from open | {r['intraday_move_from_low']:+.2f}% from low\n"
         f"ATR {r['atr_pct']:.2f}% | Turnover Rs {r['turnover_cr']:.1f} Cr\n"

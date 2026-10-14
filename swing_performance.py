@@ -6,10 +6,10 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pandas as pd
-from openpyxl import load_workbook
+from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
-from scanner.alerts import send_document
+from scanner.alerts import send, send_document
 from scanner.upstox import current_day_daily, historical_daily, load_nse_equities
 from scanner.indicators import ema
 
@@ -55,9 +55,18 @@ COLUMN_DESCRIPTIONS = [
     "Bull Market, Bear Market, or Choppy Market at entry.",
 ]
 
+VISIBLE_COLUMNS = [column for column in OUTPUT_COLUMNS if column != "Alert ID"]
+VISIBLE_DESCRIPTIONS = [
+    description
+    for column, description in zip(OUTPUT_COLUMNS, COLUMN_DESCRIPTIONS)
+    if column != "Alert ID"
+]
+VISIBLE_COLUMNS.insert(0, "No.")
+VISIBLE_DESCRIPTIONS.insert(0, "Sequence number restarting within each ISO week.")
+
 
 def _write_excel(frame):
-    """Write a readable, filtered workbook for Telegram and workflow download."""
+    """Write the dashboard and readable weekly workbook for Telegram/download."""
     report = frame[OUTPUT_COLUMNS].copy()
     report_date = datetime.now(IST).date().isoformat()
     total = len(report)
@@ -67,57 +76,71 @@ def _write_excel(frame):
     valid_performance = pd.to_numeric(report["Performance %"], errors="coerce")
     average_performance = valid_performance.mean()
 
-    with pd.ExcelWriter(EXCEL_FILE, engine="openpyxl") as writer:
-        summary = pd.DataFrame([
-            ["Performance as of", report_date],
-            ["Total alerts", total],
-            ["Trade open", open_count],
-            ["Partial exits", partial_count],
-            ["Exited alerts", exited_count],
-            ["Average performance", "" if pd.isna(average_performance) else f"{average_performance:+.2f}%"],
-        ], columns=["Metric", "Value"])
-        summary.to_excel(writer, sheet_name="Summary", index=False)
-        descriptions = pd.DataFrame([COLUMN_DESCRIPTIONS], columns=OUTPUT_COLUMNS)
-        descriptions.to_excel(
-            writer, sheet_name="Swing Performance", index=False
-        )
-        report.to_excel(
-            writer, sheet_name="Swing Performance", index=False,
-            header=False, startrow=2
-        )
-
-    workbook = load_workbook(EXCEL_FILE)
+    workbook = Workbook()
+    summary_sheet = workbook.active
+    summary_sheet.title = "Dashboard"
+    detail_sheet = workbook.create_sheet("Swing Performance")
     header_fill = PatternFill("solid", fgColor="1F4E78")
     header_font = Font(color="FFFFFF", bold=True)
     border = Border(bottom=Side(style="thin", color="D9E2F3"))
 
-    summary_sheet = workbook["Summary"]
-    summary_sheet.sheet_properties.tabColor = "1F4E78"
-    detail_sheet = workbook["Swing Performance"]
-    detail_sheet.sheet_properties.tabColor = "70AD47"
-
-    for sheet in (summary_sheet, detail_sheet):
-        sheet.freeze_panes = "A2"
-        for cell in sheet[1]:
-            cell.fill = header_fill
-            cell.font = header_font
-            cell.alignment = Alignment(horizontal="center")
-        for row in sheet.iter_rows():
-            for cell in row:
-                cell.border = border
-                cell.alignment = Alignment(vertical="top")
-
-    summary_sheet.column_dimensions["A"].width = 25
-    summary_sheet.column_dimensions["B"].width = 22
-    detail_sheet.auto_filter.ref = detail_sheet.dimensions
-    detail_sheet.freeze_panes = "A3"
-    for cell in detail_sheet[2]:
+    # Dashboard: overall trade KPIs and status breakdown.
+    numeric_performance = valid_performance.dropna()
+    closed = report[report["Status"] == "Full exit"]
+    closed_performance = pd.to_numeric(closed["Performance %"], errors="coerce").dropna()
+    win_rate = (
+        (closed_performance > 0).mean() * 100 if len(closed_performance) else None
+    )
+    dashboard_rows = [
+        ["Performance as of", report_date],
+        ["Total trades", total],
+        ["Trade open", open_count],
+        ["Partial exits", partial_count],
+        ["Full exits", exited_count],
+        ["Closed-trade win rate", "NA" if win_rate is None else f"{win_rate:.2f}%"],
+        ["Max performance", "NA" if numeric_performance.empty else f"{numeric_performance.max():+.2f}%"],
+        ["Mean performance", "NA" if numeric_performance.empty else f"{numeric_performance.mean():+.2f}%"],
+        ["Min performance", "NA" if numeric_performance.empty else f"{numeric_performance.min():+.2f}%"],
+    ]
+    summary_sheet.merge_cells("A1:E1")
+    summary_sheet["A1"] = "SWING PERFORMANCE DASHBOARD"
+    summary_sheet["A1"].fill = header_fill
+    summary_sheet["A1"].font = Font(color="FFFFFF", bold=True, size=16)
+    summary_sheet["A1"].alignment = Alignment(horizontal="center")
+    summary_sheet["A3"] = "Overall trade metrics"
+    summary_sheet["D3"] = "Status overview"
+    for cell in (summary_sheet["A3"], summary_sheet["D3"]):
         cell.fill = PatternFill("solid", fgColor="D9EAF7")
-        cell.font = Font(italic=True, color="1F1F1F")
-        cell.alignment = Alignment(wrap_text=True, vertical="top")
-    detail_sheet.row_dimensions[2].height = 42
+        cell.font = Font(bold=True, color="1F1F1F")
+    for row_number, (metric, value) in enumerate(dashboard_rows, start=4):
+        summary_sheet.cell(row_number, 1, metric)
+        summary_sheet.cell(row_number, 2, value)
+    status_rows = [
+        ["Trade open", open_count],
+        ["Partial exit", partial_count],
+        ["Full exit", exited_count],
+    ]
+    for row_number, (status, count) in enumerate(status_rows, start=4):
+        summary_sheet.cell(row_number, 4, status)
+        summary_sheet.cell(row_number, 5, count)
+    for row in summary_sheet.iter_rows(min_row=3, max_row=12, min_col=1, max_col=5):
+        for cell in row:
+            cell.border = border
+            cell.alignment = Alignment(vertical="top")
+    summary_sheet.freeze_panes = "A4"
+    summary_sheet.sheet_properties.tabColor = "1F4E78"
+    summary_sheet.column_dimensions["A"].width = 28
+    summary_sheet.column_dimensions["B"].width = 22
+    summary_sheet.column_dimensions["D"].width = 18
+    summary_sheet.column_dimensions["E"].width = 14
+
+    # Weekly detail sections. Alert IDs stay in the CSV but are intentionally
+    # not included in the shared workbook.
+    report["Alert Date"] = report["Alert Date"].fillna("").astype(str)
+    grouped = report.sort_values(["Alert Date", "Alert Time", "Ticker Name"])
+    detail_sheet.sheet_properties.tabColor = "70AD47"
     widths = {
-        "A": 26, "B": 20, "C": 18, "D": 13, "E": 14, "F": 15,
+        "A": 8, "B": 20, "C": 18, "D": 13, "E": 14, "F": 15,
         "G": 13, "H": 13, "I": 13, "J": 14, "K": 28, "L": 13,
         "M": 18, "N": 18, "O": 18,
     }
@@ -127,21 +150,65 @@ def _write_excel(frame):
     green_fill = PatternFill("solid", fgColor="E2F0D9")
     red_fill = PatternFill("solid", fgColor="FCE4D6")
     yellow_fill = PatternFill("solid", fgColor="FFF2CC")
-    for row in range(3, detail_sheet.max_row + 1):
-        status = detail_sheet.cell(row, 14)
-        performance = detail_sheet.cell(row, 13)
-        if status.value == "Trade open":
-            status.fill = yellow_fill
-        elif status.value == "Partial exit":
-            status.fill = PatternFill("solid", fgColor="FCE4D6")
-        elif status.value == "Full exit":
-            status.fill = green_fill if float(performance.value or 0) >= 0 else red_fill
-        try:
-            performance.value = float(performance.value)
-            performance.number_format = '0.00"%"'
-        except (TypeError, ValueError):
-            pass
-
+    current_row = 2  # leave one blank row before the first weekly section
+    for (year, week_number), week_frame in grouped.groupby(
+        grouped["Alert Date"].map(
+            lambda value: (
+                pd.to_datetime(value, errors="coerce").isocalendar().year,
+                pd.to_datetime(value, errors="coerce").isocalendar().week,
+            )
+            if pd.notna(pd.to_datetime(value, errors="coerce")) else (0, 0)
+        ), sort=False
+    ):
+        if current_row > 2:
+            current_row += 1
+        detail_sheet.merge_cells(
+            start_row=current_row, start_column=1,
+            end_row=current_row, end_column=len(VISIBLE_COLUMNS)
+        )
+        title = detail_sheet.cell(current_row, 1, f"WEEK {week_number} | {year}")
+        title.fill = PatternFill("solid", fgColor="155EEF")
+        title.font = Font(color="FFFFFF", bold=True, size=13)
+        title.alignment = Alignment(horizontal="center", vertical="center")
+        detail_sheet.row_dimensions[current_row].height = 25
+        current_row += 1
+        for column_number, header in enumerate(VISIBLE_COLUMNS, start=1):
+            cell = detail_sheet.cell(current_row, column_number, header)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center")
+        current_row += 1
+        for column_number, description in enumerate(VISIBLE_DESCRIPTIONS, start=1):
+            cell = detail_sheet.cell(current_row, column_number, description)
+            cell.fill = PatternFill("solid", fgColor="D9EAF7")
+            cell.font = Font(italic=True, color="1F1F1F")
+            cell.alignment = Alignment(wrap_text=True, vertical="top")
+        detail_sheet.row_dimensions[current_row].height = 42
+        current_row += 1
+        for sequence, (_, source_row) in enumerate(week_frame.iterrows(), start=1):
+            values = [sequence] + [source_row.get(column, "") for column in VISIBLE_COLUMNS[1:]]
+            for column_number, value in enumerate(values, start=1):
+                if pd.isna(value):
+                    value = ""
+                cell = detail_sheet.cell(current_row, column_number, value)
+                cell.border = border
+                cell.alignment = Alignment(vertical="top")
+            status_cell = detail_sheet.cell(current_row, 14)
+            performance_cell = detail_sheet.cell(current_row, 13)
+            if status_cell.value == "Trade open":
+                status_cell.fill = yellow_fill
+            elif status_cell.value == "Partial exit":
+                status_cell.fill = PatternFill("solid", fgColor="FCE4D6")
+            elif status_cell.value == "Full exit":
+                performance_value = pd.to_numeric(performance_cell.value, errors="coerce")
+                status_cell.fill = green_fill if performance_value >= 0 else red_fill
+            performance_value = pd.to_numeric(performance_cell.value, errors="coerce")
+            if pd.notna(performance_value):
+                performance_cell.value = float(performance_value)
+                performance_cell.number_format = '0.00"%"'
+            current_row += 1
+    detail_sheet.freeze_panes = "A5"
+    detail_sheet.auto_filter.ref = f"A1:{chr(64 + len(VISIBLE_COLUMNS))}{max(1, current_row - 1)}"
     workbook.save(EXCEL_FILE)
     return EXCEL_FILE
 
@@ -157,6 +224,45 @@ def _send_excel_report(frame):
         f"Alerts: {total} | Open: {open_count} | Partial: {partial_count} | Exited: {exited_count}"
     )
     send_document(EXCEL_FILE, caption)
+
+
+def _send_exit_alerts(frame, previous_records):
+    """Notify Telegram once for today's newly recorded partial/full exits."""
+    today = datetime.now(IST).date().isoformat()
+    events = []
+    for _, row in frame.iterrows():
+        status = str(row.get("Status", ""))
+        action_date = str(row.get("SL Hit Date", ""))
+        if status not in {"Partial exit", "Full exit"} or action_date != today:
+            continue
+        alert_id = str(row.get("Alert ID", ""))
+        previous = previous_records.get(alert_id, {})
+        previous_marker = (
+            str(previous.get("Status", "")),
+            str(previous.get("SL Hit Date", "")),
+            str(previous.get("SL Type", "")),
+        )
+        current_marker = (status, action_date, str(row.get("SL Type", "")))
+        if previous_marker == current_marker:
+            continue
+        performance = str(row.get("Performance %", ""))
+        performance_value = _float(performance)
+        performance_text = (
+            f"{performance_value:+.2f}%"
+            if performance_value is not None else performance
+        )
+        latest_close = str(row.get("Latest Close", ""))
+        events.append(
+            "\n".join([
+                f"{status.upper()} | {row.get('Ticker Name', '')}",
+                f"SL Type: {row.get('SL Type', '')} | Latest Close: Rs {latest_close}",
+                f"Performance: {performance_text} | Holding Days: {row.get('Holding Days', '')}",
+            ])
+        )
+    if not events:
+        return
+    message = "📣 SWING EXIT ALERT | " + today + "\n\n" + "\n\n".join(events)
+    send(message)
 
 
 def _float(value):
@@ -374,7 +480,8 @@ def _evaluate_alert(alert, key):
 
 
 def run():
-    records = _read_existing()
+    previous_records = _read_existing()
+    records = dict(previous_records)
     for alert in _read_current_alerts():
         records[alert["Alert ID"]] = {**records.get(alert["Alert ID"], {}), **alert}
 
@@ -406,6 +513,7 @@ def run():
     ordered = frame.sort_values(sort_columns) if sort_columns else frame
     ordered[OUTPUT_COLUMNS].to_csv(OUTPUT_FILE, index=False)
     _write_excel(ordered[OUTPUT_COLUMNS])
+    _send_exit_alerts(ordered, previous_records)
     _send_excel_report(ordered[OUTPUT_COLUMNS])
     print(f"Wrote {len(frame)} swing performance rows to {OUTPUT_FILE}.")
 

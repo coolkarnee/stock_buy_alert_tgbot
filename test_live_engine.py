@@ -19,6 +19,8 @@ class MomentumTests(unittest.TestCase):
             "close": 100.0, "volume": 1000000.0,
         })
         self.state = live_engine.build_state("TEST", self.history, None)
+        self.state["prev_low"] = 109.0
+        self.state["swing_move_references"]["1W"] = 90.0
         self.state["orb_highs"] = {3: 105.0}
         self.quote = {
             "last_price": 110.0, "volume": 4000000.0,
@@ -103,7 +105,7 @@ class MomentumTests(unittest.TestCase):
 
     def test_ipo_exemptions_and_listing_high(self):
         self.state = live_engine.build_state("IPO", self.history.iloc[:10], None)
-        self.state.update({"orb_highs": {3: 105}, "year_low": 100, "prior_tr13": 0, "ema21": 200})
+        self.state.update({"orb_highs": {3: 105}, "year_low": 100, "prior_tr13": 0, "ema21": 200, "prev_low": 109.0})
         result = live_engine.evaluate(self.state, self.quote)
         self.assertTrue(result["buy"], result["checks"])
         self.state["year_high"] = 130

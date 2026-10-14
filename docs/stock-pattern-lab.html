@@ -92,11 +92,11 @@
     <tbody>
       <tr><td>Alert ID</td><td>Stable alert identifier.</td></tr>
       <tr><td>Performance As Of Date</td><td>Date through which the report was computed.</td></tr>
-      <tr><td>Ticker Name / Buy Price / Entry Day SL</td><td>Alert trade reference values.</td></tr>
+      <tr><td>Ticker Name / Buy Price / Entry Day SL / Latest Close</td><td>Alert symbol, entry price, previous-day-low stop, and latest daily closing price used in the report.</td></tr>
       <tr><td>Alert Type / Alert Date / Alert Time</td><td>Momentum or EP category and entry timestamp.</td></tr>
       <tr><td>SL Hit Date / SL Type</td><td>Latest action date and whether it was previous-day-low SL, breakeven SL, profit booking, 10 DEMA closing-basis action, or 20 DEMA closing-basis exit.</td></tr>
       <tr><td>Holding Days</td><td>Trading sessions from alert through exit, or through the report date while open.</td></tr>
-      <tr><td>Performance %</td><td>Return from buy price to exit price, or latest close while open.</td></tr>
+      <tr><td>Performance %</td><td>Return from buy price to the latest close, with weighted realized and remaining-position performance after partial exits.</td></tr>
       <tr><td>Status</td><td><code>Trade open</code>, <code>Partial exit</code>, <code>Full exit</code>, or a data/error status.</td></tr>
       <tr><td>Market Context</td><td>Entry context: Bull Market, Bear Market, or Choppy Market. It controls the profit-booking threshold and size.</td></tr>
     </tbody>

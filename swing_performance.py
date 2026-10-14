@@ -25,6 +25,7 @@ OUTPUT_COLUMNS = [
     "Ticker Name",
     "Buy Price",
     "Entry Day SL",
+    "Latest Close",
     "Alert Type",
     "Alert Date",
     "Alert Time",
@@ -42,6 +43,7 @@ COLUMN_DESCRIPTIONS = [
     "NSE ticker symbol.",
     "Alert/buy price used for return calculation.",
     "Previous trading day's low; initial protective stop.",
+    "Latest daily closing price as of Performance As Of Date.",
     "BUY or EP alert type.",
     "Date on which the alert was generated.",
     "IST time at which the alert was generated.",
@@ -115,9 +117,9 @@ def _write_excel(frame):
         cell.alignment = Alignment(wrap_text=True, vertical="top")
     detail_sheet.row_dimensions[2].height = 42
     widths = {
-        "A": 26, "B": 20, "C": 18, "D": 13, "E": 14, "F": 13,
-        "G": 13, "H": 13, "I": 14, "J": 28, "K": 13, "L": 18, "M": 18,
-        "N": 18,
+        "A": 26, "B": 20, "C": 18, "D": 13, "E": 14, "F": 15,
+        "G": 13, "H": 13, "I": 13, "J": 14, "K": 28, "L": 13,
+        "M": 18, "N": 18, "O": 18,
     }
     for column, width in widths.items():
         detail_sheet.column_dimensions[column].width = width
@@ -126,8 +128,8 @@ def _write_excel(frame):
     red_fill = PatternFill("solid", fgColor="FCE4D6")
     yellow_fill = PatternFill("solid", fgColor="FFF2CC")
     for row in range(3, detail_sheet.max_row + 1):
-        status = detail_sheet.cell(row, 13)
-        performance = detail_sheet.cell(row, 12)
+        status = detail_sheet.cell(row, 14)
+        performance = detail_sheet.cell(row, 13)
         if status.value == "Trade open":
             status.fill = yellow_fill
         elif status.value == "Partial exit":
@@ -299,15 +301,14 @@ def _evaluate_alert(alert, key):
 
         for day_number, (_, day) in enumerate(window.iterrows(), start=1):
             close = float(day["close"])
-            low = float(day["low"])
             high = float(day["high"])
             day_date = day["date"]
 
             if not triggered:
-                if sl is not None and low <= sl:
+                if sl is not None and close < sl:
                     event_date = day_date
                     event_type = "Prev Day Low SL"
-                    realized = sl / buy_price - 1
+                    realized = close / buy_price - 1
                     remaining = 0.0
                     holding_days = day_number
                     status = "Full exit"
@@ -323,7 +324,7 @@ def _evaluate_alert(alert, key):
                     holding_days = day_number
                     continue
             else:
-                if close <= buy_price:
+                if close < buy_price:
                     realized += remaining * (buy_price / buy_price - 1)
                     remaining = 0.0
                     event_date = day_date
@@ -350,6 +351,7 @@ def _evaluate_alert(alert, key):
                     status = "Partial exit"
 
         as_of = window.iloc[-1]
+        as_of_date = as_of["date"]
         as_of_price = float(as_of["close"])
         if event_date is None:
             event_date = None
@@ -357,8 +359,10 @@ def _evaluate_alert(alert, key):
         performance = _weighted_return(realized, remaining, buy_price, as_of_price)
         return {
             **base,
+            "Performance As Of Date": as_of_date.isoformat(),
             "SL Hit Date": _format_date(event_date),
             "SL Type": event_type,
+            "Latest Close": f"{as_of_price:.2f}",
             "Holding Days": holding_days,
             "Performance %": f"{performance:.2f}",
             "Status": status,

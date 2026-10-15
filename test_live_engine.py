@@ -131,9 +131,25 @@ class MomentumTests(unittest.TestCase):
             self.assertFalse(live_engine.evaluate(self.state, self.quote)["buy"])
 
     def test_no_evaluation_outside_session(self):
-        for minutes in (2, 375, 400):
+        with patch.object(live_engine, "_market_minutes", return_value=(2, None, None)):
+            result = live_engine.evaluate(self.state, self.quote)
+            self.assertIsNotNone(result)
+            self.assertFalse(result["buy"])
+        for minutes in (375, 400):
             with patch.object(live_engine, "_market_minutes", return_value=(minutes, None, None)):
                 self.assertIsNone(live_engine.evaluate(self.state, self.quote))
+
+    def test_ep_can_evaluate_before_three_minutes_without_orb(self):
+        self.quote.update({
+            "last_price": 110.0,
+            "volume": 300000000.0,
+            "ohlc": {"open": 106.0, "high": 110.0, "low": 106.0},
+        })
+        with patch.object(live_engine, "_market_minutes", return_value=(2, None, None)):
+            result = live_engine.evaluate(self.state, self.quote)
+        self.assertTrue(result["episodic_pivot"])
+        self.assertFalse(result["buy"])
+        self.assertFalse(result["checks"]["orb"])
 
     def test_invalid_daily_ohlc_blocked(self):
         self.quote["ohlc"]["low"] = 0

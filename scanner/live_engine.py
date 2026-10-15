@@ -147,7 +147,10 @@ def _market_minutes():
 
 def evaluate(state, quote):
     minutes, _, _ = _market_minutes()
-    if minutes < 3 or minutes >= 375:
+    # EP is independent of opening-range data and may be delivered from the
+    # opening tick. Momentum BUY still remains blocked until an ORB can qualify
+    # it through the existing `checks["orb"]` condition below.
+    if minutes >= 375:
         return None
     price = float(quote.get("last_price") or 0)
     volume = float(quote.get("volume") or 0)

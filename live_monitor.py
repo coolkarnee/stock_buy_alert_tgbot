@@ -405,6 +405,7 @@ def run():
             if not open_summary_sent:
                 time.sleep(1)
                 continue
+            evaluated = []
             for instrument_key, quote in quotes.items():
                 state = states[instrument_key]
                 alert_key = (datetime.now(IST).date(), state["symbol"])
@@ -415,6 +416,12 @@ def run():
                 result = evaluate(state, quote)
                 if not result:
                     continue
+                evaluated.append((instrument_key, alert_key, result))
+
+            # Keep the delivery order explicit: market context/breadth has
+            # already been sent above, then EP, then Momentum BUY. This does
+            # not alter either signal's checks or once-per-day suppression.
+            for _, alert_key, result in evaluated:
                 if result["episodic_pivot"] and alert_key not in sent_ep:
                     sent_ep.add(alert_key)
                     with alert_log.open("a", newline="", encoding="utf-8") as f:
@@ -428,6 +435,8 @@ def run():
                             result.get("market_regime", ""),
                         ])
                     send(fmt_alert("EP", result), chart_symbol=result["symbol"])
+
+            for _, alert_key, result in evaluated:
                 if result["buy"] and alert_key not in sent_buy:
                     sent_buy.add(alert_key)
                     with alert_log.open("a", newline="", encoding="utf-8") as f:
@@ -441,6 +450,9 @@ def run():
                             result.get("market_regime", ""),
                         ])
                     send(fmt_alert("BUY", result), chart_symbol=result["symbol"])
+
+            for instrument_key, _, result in evaluated:
+                state = states[instrument_key]
                 if result["buy"]:
                     continue
                 eligible = all(passed for name, passed in result["checks"].items()

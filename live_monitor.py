@@ -23,6 +23,7 @@ from scanner.upstox import (
     load_nse_equities,
     historical_daily,
     historical_many,
+    full_market_quotes,
 )
 
 IST = ZoneInfo("Asia/Kolkata")
@@ -57,9 +58,20 @@ def find_market_index_keys(instruments):
         if len(matches) == 1:
             found[display_name] = matches[0]["instrument_key"]
         else:
+            available = sorted(
+                str(instrument.get("trading_symbol", ""))
+                for instrument in instruments
+                if instrument.get("segment") == "NSE_INDEX"
+                and instrument.get("instrument_type") == "INDEX"
+            )
+            nearby = [
+                symbol for symbol in available
+                if expected in normalize(symbol) or normalize(symbol) in expected
+            ][:10]
             print(
                 f"{display_name} exact Upstox instrument unavailable; "
-                f"expected 1 match for {trading_symbol!r}, found {len(matches)}."
+                f"expected 1 match for {trading_symbol!r}, found {len(matches)}. "
+                f"Nearby available symbols: {nearby or 'none'}."
             )
     return found
 
@@ -78,6 +90,34 @@ def classify_index(index_state, quote):
     if price < live_ema10 and price < live_ema20:
         return "Bear", (live_ema10, live_ema20)
     return "Chop", (live_ema10, live_ema20)
+
+
+def build_index_state(frame):
+    completed = _completed(frame)
+    if len(completed) < 20:
+        return None
+    ema10_series = ema(completed.close, 10)
+    ema20_series = ema(completed.close, 20)
+    return {
+        "prev_close": float(completed.close.iloc[-1]),
+        "ema10": float(ema10_series.iloc[-1]),
+        "ema20": float(ema20_series.iloc[-1]),
+        "prev_ema10": float(ema10_series.iloc[-2]),
+        "prev_ema20": float(ema20_series.iloc[-2]),
+    }
+
+
+def quote_from_snapshot(snapshot):
+    ohlc = snapshot.get("ohlc") or {}
+    return {
+        "last_price": float(snapshot.get("last_price") or 0),
+        "volume": float(snapshot.get("volume") or ohlc.get("volume") or 0),
+        "ohlc": {
+            field: float(ohlc.get(field) or 0)
+            for field in ("open", "high", "low")
+        },
+        "timestamp": str(snapshot.get("timestamp", "")),
+    }
 
 
 def market_summary(phase, index_states, index_quotes, previous_conclusion=None, alert_counts=None):
@@ -239,6 +279,7 @@ def run():
     benchmark_name = "NIFTY 500"
     try:
         index_keys = find_market_index_keys(load_instruments())
+        print(f"Resolved Upstox market indexes: {', '.join(sorted(index_keys)) or 'none'}")
     except Exception as exc:
         print(f"Upstox index instrument master unavailable: {exc}")
         index_keys = {}
@@ -250,20 +291,12 @@ def run():
             continue
         try:
             frame = historical_daily(key, years=2)
-            completed = _completed(frame)
-            if len(completed) < 20:
-                print(f"{name} history unavailable: only {len(completed)} completed candles.")
+            state = build_index_state(frame)
+            if state is None:
+                print(f"{name} history unavailable: fewer than 20 completed candles.")
                 continue
-            ema10_series = ema(completed.close, 10)
-            ema20_series = ema(completed.close, 20)
             index_frames[name] = frame
-            index_states[name] = {
-                "prev_close": float(completed.close.iloc[-1]),
-                "ema10": float(ema10_series.iloc[-1]),
-                "ema20": float(ema20_series.iloc[-1]),
-                "prev_ema10": float(ema10_series.iloc[-2]),
-                "prev_ema20": float(ema20_series.iloc[-2]),
-            }
+            index_states[name] = state
         except Exception as exc:
             print(f"{name} history unavailable: {exc}")
 
@@ -392,6 +425,36 @@ def run():
                 quotes = dict(latest_quotes)
                 current_index_quotes = dict(index_quotes)
             if not open_summary_sent and datetime.now(IST) >= start + MARKET_CONTEXT_DELAY:
+                # Retry index history after the open and use a REST snapshot
+                # if the WebSocket has not delivered index ticks.
+                for name, _ in MARKET_INDICES:
+                    if name in index_states:
+                        continue
+                    key = index_keys.get(name)
+                    if not key:
+                        continue
+                    try:
+                        frame = historical_daily(key, years=2)
+                        state = build_index_state(frame)
+                        if state is not None:
+                            index_frames[name] = frame
+                            index_states[name] = state
+                    except Exception as exc:
+                        print(f"{name} delayed history retry failed: {exc}")
+                try:
+                    snapshots = full_market_quotes(list(index_keys.values()))
+                    for key, snapshot in snapshots.items():
+                        name = index_name_by_key.get(key)
+                        if name and snapshot.get("last_price") is not None:
+                            current_index_quotes[name] = quote_from_snapshot(snapshot)
+                except Exception as exc:
+                    print(f"Delayed index quote snapshot failed: {exc}")
+                for name, _ in MARKET_INDICES:
+                    quote = current_index_quotes.get(name)
+                    if name not in index_states:
+                        print(f"{name} index state unavailable; trend cannot be classified.")
+                    if not quote or quote.get("last_price", 0) <= 0:
+                        print(f"{name} live quote unavailable after WebSocket and REST fallback.")
                 send(
                     market_summary(
                         "OPEN",

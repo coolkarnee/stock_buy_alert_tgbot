@@ -217,6 +217,8 @@ RVOL projects cumulative volume to a 375-minute session using elapsed session ti
 
 Run the offline regression suite with `python -m unittest test_live_engine -v`. It does not contact Telegram or Upstox. Real-time delivery additionally requires valid Upstox and Telegram credentials and a running monitor each trading day.
 
+To diagnose Upstox index symbols and EMA history, run `UPSTOX_ACCESS_TOKEN=... python test_upstox_indices.py`. It lists every available `NSE_INDEX` instrument, checks the six market-summary indexes, and prints EMA10/EMA21 values. Add `--all-indexes` to calculate EMAs for every available Upstox NSE index.
+
 ## Outputs And Alerts
 
 The batch scan writes `scan_results.csv` in the current working directory when the combined results are non-empty. Successful analyses include the signal flags, score, VCP fields, measurements, failed BUY filters, and data status. Stocks whose history download or analysis failed are included with a failure status and error text. If there are no successful rows and no recorded failures, no CSV is written.

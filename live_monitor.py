@@ -29,24 +29,30 @@ IST = ZoneInfo("Asia/Kolkata")
 TRADINGVIEW_INDIA_URL = "https://www.tradingview.com/markets/india/#stocks"
 
 MARKET_INDICES = (
-    ("Nifty", "NIFTY"),
-    ("NIFTY 500", "NIFTY 500"),
-    ("NIFTY MIDSML400", "NIFTY MIDSML 400"),
-    ("NIFTY MIDCAP 150", "NIFTY MIDCAP 150"),
-    ("NIFTY SMLCAP 250", "NIFTY SMLCAP 250"),
-    ("NIFTY MICROCAP 250", "NIFTY MICROCAP250"),
+    ("Nifty", "Nifty 50"),
+    ("NIFTY 500", "Nifty 500"),
+    ("NIFTY MIDSML400", "Nifty Midsml 400"),
+    ("NIFTY MIDCAP 150", "Nifty Midcap 150"),
+    ("NIFTY SMLCAP 250", "Nifty Smlcap 250"),
+    ("NIFTY MICROCAP 250", "Nifty Microcap250"),
 )
+
+MARKET_CONTEXT_DELAY = timedelta(minutes=20)
 
 
 def find_market_index_keys(instruments):
-    """Return exact Upstox NSE_INDEX matches; unavailable indices remain absent."""
+    """Return exact normalized Upstox NSE_INDEX matches."""
+    def normalize(symbol):
+        return re.sub(r"[^A-Z0-9]", "", str(symbol).upper())
+
     found = {}
     for display_name, trading_symbol in MARKET_INDICES:
+        expected = normalize(trading_symbol)
         matches = [
             instrument for instrument in instruments
             if instrument.get("segment") == "NSE_INDEX"
             and instrument.get("instrument_type") == "INDEX"
-            and str(instrument.get("trading_symbol", "")).upper() == trading_symbol
+            and normalize(instrument.get("trading_symbol", "")) == expected
         ]
         if len(matches) == 1:
             found[display_name] = matches[0]["instrument_key"]
@@ -126,8 +132,9 @@ def scrape_tradingview_breadth(url=TRADINGVIEW_INDIA_URL):
         text = html.unescape(re.sub(r"<[^>]+>", " ", response.text))
         text = re.sub(r"\s+", " ", text)
         for label in values:
+            base_label = label.removesuffix(" MA")
             match = re.search(
-                rf"{re.escape(label)}\s+(\d+(?:\.\d+)?)\s*%",
+                rf"{re.escape(base_label)}\s*(?:MA)?\s*[:\-]?\s*(\d+(?:\.\d+)?)\s*%",
                 text,
                 flags=re.IGNORECASE,
             )
@@ -384,27 +391,18 @@ def run():
             with quote_lock:
                 quotes = dict(latest_quotes)
                 current_index_quotes = dict(index_quotes)
-            if not open_summary_sent:
-                fetched_index_quotes = {
-                    name for name, quote in current_index_quotes.items()
-                    if name in index_states and quote.get("last_price", 0) > 0
-                }
-                quote_timeout = datetime.now(IST) >= start + timedelta(seconds=60)
-                if fetched_index_quotes or quote_timeout:
-                    send(
-                        market_summary(
-                            "OPEN",
-                            index_states,
-                            current_index_quotes,
-                            previous_conclusion=prior_performance_conclusion(),
-                        )
+            if not open_summary_sent and datetime.now(IST) >= start + MARKET_CONTEXT_DELAY:
+                send(
+                    market_summary(
+                        "OPEN",
+                        index_states,
+                        current_index_quotes,
+                        previous_conclusion=prior_performance_conclusion(),
                     )
-                    breadth_values, breadth_error = scrape_tradingview_breadth()
-                    send(fmt_breadth_alert(breadth_values, breadth_error))
-                    open_summary_sent = True
-            if not open_summary_sent:
-                time.sleep(1)
-                continue
+                )
+                breadth_values, breadth_error = scrape_tradingview_breadth()
+                send(fmt_breadth_alert(breadth_values, breadth_error))
+                open_summary_sent = True
             evaluated = []
             for instrument_key, quote in quotes.items():
                 state = states[instrument_key]

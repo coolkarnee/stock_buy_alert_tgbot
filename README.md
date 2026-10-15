@@ -9,7 +9,7 @@ This repository is an alert-only scanner. It does not place orders or manage pos
 | Entry point | Behavior |
 | --- | --- |
 | `main.py` | Downloads the current universe and about two years of daily history, evaluates each stock, prints a scan summary, sends Telegram alerts for BUY results, and writes `scan_results.csv` if there are results or per-symbol failures to report. |
-| `live_monitor.py` | Builds historical reference state, sends a first market-open summary for six indices followed by a TradingView India market-breadth snapshot, connects to the Upstox V3 full-market WebSocket, evaluates live quotes each second, sends a final market-close summary, and sends at most one Momentum BUY and one Episodic Pivot BUY alert per symbol per day within that process. |
+| `live_monitor.py` | Builds historical reference state, sends a six-index summary and TradingView India market-breadth snapshot 20 minutes after market open, connects to the Upstox V3 full-market WebSocket, evaluates live quotes each second, sends a final market-close summary, and sends at most one Momentum BUY and one Episodic Pivot BUY alert per symbol per day within that process. |
 | `performance.py` | Reads the live alert CSV, fetches the day's close and post-alert intraday high, sends a Telegram summary, writes `performance.csv`, and saves a concise conclusion for the next market-open summary. |
 | `swing_performance.py` | Recomputes the persistent swing-performance sheet for every live alert until the first daily SL/EMA break. |
 | `test_live_engine.py` | Offline automated tests for momentum rules, IPO exemptions, ORB candles, feed parsing, and mocked Telegram dispatch. |

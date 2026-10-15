@@ -164,7 +164,7 @@ Live selection does not use VCP or the batch candidate score. Every mandatory co
 | Price | Strictly above ₹20 |
 | Liquidity | Turnover strictly above ₹20 Cr |
 | Opening range | Break at least one completed 3m, 5m, 15m, 30m, or 60m opening range |
-| SL risk | Previous-day-low distance is >0% and ≤6% of entry price |
+| SL risk | Previous-day-low distance is >0% and ≤8% of entry price |
 
 ### Multi-period swing strength
 
@@ -184,7 +184,7 @@ Only the existing two-year history request is used. A period qualifies only when
 
 ### Previous-day-low risk and position size
 
-Momentum BUY alerts are sent only when the previous-day-low stop is no more than 6% below entry:
+Momentum BUY alerts are sent only when the previous-day-low stop is no more than 8% below entry:
 
 ```text
 SL distance % = ((Buy Price − Previous Day Low) / Buy Price) × 100
@@ -231,7 +231,7 @@ Stock Telegram alerts include an `Open TradingView Chart` inline button. The but
 
 ## Swing Performance
 
-The live monitor records each Momentum BUY and Episodic Pivot BUY with ticker, buy price, previous-day-low SL, entry market context, alert type, date, and time in `live_alerts.csv`. Momentum BUY alerts are sent only when the previous-day-low distance is positive and no more than 6% below the buy price. Their maximum portfolio allocation for 1% portfolio risk is `min(25%, 1% / SL distance)`. The position-size filter does not apply to EP alerts. The `swing_performance.py` job merges the current day's alerts with the committed history in `artifacts/swing_performance.csv` and recalculates every row.
+The live monitor records each Momentum BUY and Episodic Pivot BUY with ticker, buy price, previous-day-low SL, entry market context, alert type, date, and time in `live_alerts.csv`. Momentum BUY alerts are sent only when the previous-day-low distance is positive and no more than 8% below the buy price. Their maximum portfolio allocation for 1% portfolio risk is `min(25%, 1% / SL distance)`. The position-size filter does not apply to EP alerts. The `swing_performance.py` job merges the current day's alerts with the committed history in `artifacts/swing_performance.csv` and recalculates every row.
 
 The report stores the market context at entry and uses the previous trading day's low as the initial SL. In a Bear/Choppy market, a +10% move books 30%; in a Bull market, a +15% move books 20%. The remaining quantity trails at the higher of breakeven and the 10 EMA on daily closing basis. A 10 EMA close break sells 50% of the remaining quantity; a 20 EMA close break or a post-trigger breakeven close break exits the remainder. `Latest Close` is the latest daily close on the `Performance As Of Date`; all SL checks are closing-basis checks. `Performance %` is computed from entry to latest close, with weighted realized and remaining-position return after partial exits. Status values are `Trade open`, `Partial exit`, and `Full exit`. EMA and SL checks use daily bars, so this is a daily-bar retrospective report rather than tick-level execution accounting.
 

@@ -8,7 +8,7 @@ from scanner.indicators import ema
 
 IST = ZoneInfo("Asia/Kolkata")
 ORB_WINDOWS = (3, 5, 15, 30, 60)
-MAX_SL_DISTANCE_PCT = 6.0
+MAX_SL_DISTANCE_PCT = 8.0
 PORTFOLIO_RISK_PCT = 1.0
 MAX_POSITION_SIZE_PCT = 25.0
 SWING_MOVE_RULES = (

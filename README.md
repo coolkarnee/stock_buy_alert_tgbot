@@ -211,9 +211,11 @@ Alerts show the data window behind ATR and turnover, so short-history stocks (IP
 - `Turnover Nd avg`: N = sessions in the turnover average (`turnover_period_days`, max 50, includes today).
 - `Strength:` (Momentum BUY only) lists every swing-strength period that passed, with move and threshold (`swing_moves_matched` from `evaluate()`); IPOs show `IPO exempt`.
 - `Perf:` (EP only, informational; EP does not require swing strength) lists the move for every period with an available reference close (1W, 1M, 3M, 6M, 1Y, 18M, 24M); `✓` marks a move above its swing-strength threshold. With fewer than 5 completed sessions it shows `Perf: NA (N sessions)`.
+- `Momentum Stock` (Momentum BUY and EP, line 2, informational; does not change BUY/EP rules): shown when price is above both live EMA10 and EMA21 **and** both EMAs are rising on completed bars (yesterday's EMA10 > the day before's, same for EMA21). Uses `ema10_prev`/`ema21_prev` from `build_state()`; needs at least 2 completed sessions. Exposed as `momentum_stock` in `evaluate()`.
 
 ```text
 MOMENTUM BUY - ELECON
+Momentum Stock
 Price Rs 110.00 | Prev Day Low SL Rs 104.50
 Max Position 20.00%
 Gap +0.00% | Move +10.00% from open | +10.00% from low

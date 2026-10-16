@@ -176,6 +176,29 @@ class MomentumTests(unittest.TestCase):
         with patch.object(settings, "LIVE_BLOCK_EXTENDED", True):
             self.assertFalse(live_engine.evaluate(self.state, self.quote)["buy"])
 
+    def test_momentum_stock_tag(self):
+        # Flat fixture closes -> flat EMAs -> no tag.
+        result = live_engine.evaluate(self.state, self.quote)
+        self.assertFalse(result["momentum_stock"])
+        self.assertNotIn("Momentum Stock", live_monitor.fmt_alert("BUY", result))
+
+        self.state.update({"ema10": 100.0, "ema10_prev": 99.0, "ema21": 98.0, "ema21_prev": 97.0})
+        result = live_engine.evaluate(self.state, self.quote)
+        self.assertTrue(result["momentum_stock"])
+        self.assertEqual(live_monitor.fmt_alert("BUY", result).splitlines()[1], "Momentum Stock")
+        self.assertEqual(live_monitor.fmt_alert("EP", result).splitlines()[1], "Momentum Stock")
+        self.assertTrue(result["buy"], "tag must not change BUY rules")
+
+        for update in ({"ema21_prev": 99.0},                     # EMA21 sloping down
+                       {"ema10": 120.0, "ema10_prev": 119.0}):    # price below live EMA10
+            with self.subTest(update=update):
+                state = dict(self.state, **update)
+                self.assertFalse(live_engine.evaluate(state, self.quote)["momentum_stock"])
+
+        one_day = live_engine.build_state("NEW", self.history.iloc[:1], None)
+        self.assertIsNone(one_day["ema10_prev"])
+        self.assertFalse(live_engine.evaluate(one_day, self.quote)["momentum_stock"])
+
     def test_no_evaluation_outside_session(self):
         with patch.object(live_engine, "_market_minutes", return_value=(2, None, None)):
             result = live_engine.evaluate(self.state, self.quote)

@@ -65,6 +65,9 @@ def build_state(symbol, df, nifty_df):
         "is_ipo": len(history) < 252,
         "ema10": float(ema(history.close, 10).iloc[-1]),
         "ema21": float(ema(history.close, 21).iloc[-1]),
+        # Previous-session EMA values, used for the completed-bar slope check.
+        "ema10_prev": float(ema(history.close, 10).iloc[-2]) if len(history) >= 2 else None,
+        "ema21_prev": float(ema(history.close, 21).iloc[-2]) if len(history) >= 2 else None,
         "prior_tr13": float(true_ranges.iloc[-13:].sum()),
         "year_high": float(history.high.iloc[-252:].max()),
         "year_low": float(history.low.iloc[-252:].min()),
@@ -310,6 +313,12 @@ def evaluate(state, quote):
         "breakout": breakout,
         "checks": checks,
         "episodic_pivot": episodic_pivot,
+        # Informational only: price above live EMA10/EMA21 and both EMAs rising on completed bars.
+        "momentum_stock": bool(
+            price > current_ema10 and price > current_ema21 and
+            state.get("ema10_prev") is not None and state.get("ema21_prev") is not None and
+            state["ema10"] > state["ema10_prev"] and state["ema21"] > state["ema21_prev"]
+        ),
         "score": sum(bool(passed) for passed in checks.values()),
         "buy": all(checks.values()),
         "timestamp": quote.get("timestamp", ""),

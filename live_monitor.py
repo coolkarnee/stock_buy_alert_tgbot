@@ -218,9 +218,11 @@ def fmt_alert(kind, r):
     market = r.get("market_regime", "Choppy Market")
     benchmark = r.get("market_benchmark", "NIFTY 500")
     ranges = ", ".join(f"{window}m" for window in r["orb_windows"])
+    momentum_tag = "Momentum Stock\n" if r.get("momentum_stock") else ""
     if kind == "EP":
         return (
             f"EPISODIC PIVOT BUY - {r['symbol']}\n"
+            f"{momentum_tag}"
             f"Price Rs {r['price']:.2f} | Gap {(r['day_open'] / r['prev_close'] - 1) * 100:+.2f}%\n"
             f"Prev Day Low SL Rs {r['prev_low']:.2f}\n"
             f"{_atr_turnover_line(r)}\n"
@@ -238,6 +240,7 @@ def fmt_alert(kind, r):
     volume_line = f"\n{' | '.join(orb_and_volume)}" if orb_and_volume else ""
     return (
         f"MOMENTUM BUY - {r['symbol']}\n"
+        f"{momentum_tag}"
         f"Price Rs {r['price']:.2f} | Prev Day Low SL Rs {r['prev_low']:.2f}\n"
         f"Max Position {r['position_size_pct']:.2f}%\n"
         f"Gap {(r['day_open'] / r['prev_close'] - 1) * 100:+.2f}% | "

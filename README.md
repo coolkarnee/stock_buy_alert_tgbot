@@ -73,7 +73,7 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-If `py` is not recognized (launcher not on PATH), use the full interpreter path instead, e.g. `& "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe" -m venv .venv`. If winget's `msstore` source fails with a certificate error, install with `winget install --id Python.Python.3.12 --source winget --scope user`. `.venv/` is git-ignored.
+If `py` is not recognized (launcher not on PATH), use the full interpreter path instead, e.g. `& "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe" -m venv .venv`. If winget's `msstore` source fails with a certificate error, install with `winget install --id Python.Python.3.12 --source winget --scope user`. The repo has no `.gitignore`; hide local files per clone (see the quick reference below).
 
 Set `UPSTOX_ACCESS_TOKEN` for Upstox historical and streaming data. Set both `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` to deliver Telegram messages. `TELEGRAM_CHAT_ID` may contain comma-separated chat IDs. If either Telegram setting is absent, alerts are printed to standard output instead of sent.
 
@@ -94,7 +94,7 @@ Run from the repo root. Uses the venv interpreter directly, so activation is not
 Notes:
 - If emoji printing fails in the Windows console (`UnicodeEncodeError`), set `$env:PYTHONIOENCODING="utf-8"` first; GitHub runners are unaffected.
 - The breadth preview writes today's row to `artifacts/market_breadth.csv`; discard it with `git restore artifacts/market_breadth.csv` (or delete it if untracked) unless you want it committed.
-- Generated, git-ignored outputs: `.venv/`, `__pycache__/`, `live_alerts.csv`.
+- Generated local outputs: `.venv/`, `__pycache__/`, `live_alerts.csv`. Hide them from git locally (one-time, never committed): `Add-Content .git\info\exclude "`n.venv/`n__pycache__/`nlive_alerts.csv"`.
 
 Run one of the scripts from the repository root:
 
@@ -277,7 +277,7 @@ RVOL projects cumulative volume to a 375-minute session using elapsed session ti
 
 `scanner/live_data.py` contains a Yahoo Finance INR market-cap helper for future use, but the current live monitor does not invoke it, so there is no market-cap lookup, retry, or market-cap rejection in the active signal path. Missing/incomplete opening candles cannot establish an ORB; these requests are retried at most once per minute per stock until all five ranges are available. The first eligible alert can be delayed by provider latency, queues, or rate limits. Starting after the open still reconstructs the full opening ranges from candles, rather than approximating them from observed ticks.
 
-Run the offline regression suite with `python -m unittest test_live_engine -v`. It does not contact Telegram or Upstox. All 28 tests pass; fixtures reflect current rules (close-mode ORB needs `orb_close_breaks`, 50-day turnover > 20 Cr, RVOL from `rvol_prev19_volume`, swing-move strength, and the end-to-end monitor test mocks `load_instruments` and `send_breadth_alerts`). The monitor test writes `live_alerts.csv` in the working directory (git-ignored). Real-time delivery additionally requires valid Upstox and Telegram credentials and a running monitor each trading day.
+Run the offline regression suite with `python -m unittest test_live_engine -v`. It does not contact Telegram or Upstox. All 28 tests pass; fixtures reflect current rules (close-mode ORB needs `orb_close_breaks`, 50-day turnover > 20 Cr, RVOL from `rvol_prev19_volume`, swing-move strength, and the end-to-end monitor test mocks `load_instruments` and `send_breadth_alerts`). The monitor test writes `live_alerts.csv` in the working directory (hidden via `.git/info/exclude`; see the quick reference). Real-time delivery additionally requires valid Upstox and Telegram credentials and a running monitor each trading day.
 
 To diagnose Upstox index symbols and EMA history, run `UPSTOX_ACCESS_TOKEN=... python test_upstox_indices.py`. It lists every available `NSE_INDEX` instrument, checks the six market-summary indexes, and prints EMA10/EMA21 values. Add `--all-indexes` to calculate EMAs for every available Upstox NSE index.
 

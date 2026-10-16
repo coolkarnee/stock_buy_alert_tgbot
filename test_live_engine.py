@@ -16,12 +16,14 @@ class MomentumTests(unittest.TestCase):
         self.history = pd.DataFrame({
             "timestamp": pd.date_range("2025-01-01", periods=270, tz=live_engine.IST),
             "open": 101.0, "high": 104.0, "low": 70.0,
-            "close": 100.0, "volume": 1000000.0,
+            # 2.5M shares at ~Rs 100 keeps 50-day turnover above MIN_TURNOVER_CR (20 Cr).
+            "close": 100.0, "volume": 2500000.0,
         })
         self.state = live_engine.build_state("TEST", self.history, None)
         self.state["prev_low"] = 109.0
         self.state["swing_move_references"]["1W"] = 90.0
         self.state["orb_highs"] = {3: 105.0}
+        self.state["orb_close_breaks"] = {3: True}
         self.quote = {
             "last_price": 110.0, "volume": 4000000.0,
             "ohlc": {"open": 100.0, "high": 110.0, "low": 100.0},
@@ -41,14 +43,20 @@ class MomentumTests(unittest.TestCase):
         self.assertFalse(live_engine.evaluate(self.state, self.quote)["buy"])
 
     def test_orb_requires_strict_break(self):
-        self.state["orb_highs"] = {3: 110.0}
+        self.state["orb_close_breaks"] = {3: False}
         self.assertFalse(live_engine.evaluate(self.state, self.quote)["checks"]["orb"])
+        with patch.object(settings, "OPENING_RANGE_BREAKOUT_MODE", "spot"):
+            self.state["orb_highs"] = {3: 110.0}
+            self.assertFalse(live_engine.evaluate(self.state, self.quote)["checks"]["orb"])
+            self.state["orb_highs"] = {3: 109.99}
+            self.assertTrue(live_engine.evaluate(self.state, self.quote)["checks"]["orb"])
 
     def test_any_orb_window_can_qualify(self):
         with patch.object(live_engine, "_market_minutes", return_value=(60, None, None)):
             for window in live_engine.ORB_WINDOWS:
                 with self.subTest(window=window):
                     self.state["orb_highs"] = {window: 105.0}
+                    self.state["orb_close_breaks"] = {window: True}
                     self.assertTrue(live_engine.evaluate(self.state, self.quote)["buy"])
 
     def test_pdc_breakout_does_not_require_pdh(self):
@@ -74,8 +82,14 @@ class MomentumTests(unittest.TestCase):
         self.assertFalse(live_engine.evaluate(self.state, self.quote)["checks"]["breakout"])
 
     def test_turnover_boundary_is_strict(self):
-        self.quote["volume"] = 30 * 1e7 / self.quote["last_price"]
+        # Price 125 and avg volume 1.6M give exactly 20 Cr 50-day turnover.
+        self.quote.update({"last_price": 125.0, "ohlc": {"open": 100.0, "high": 125.0, "low": 100.0}})
+        volume = self.quote["volume"]
+        self.state["turnover_prev49_close"] = 49 * 125.0
+        self.state["turnover_prev49_volume"] = 50 * 1.6e6 - volume
         self.assertFalse(live_engine.evaluate(self.state, self.quote)["checks"]["liquidity"])
+        self.state["turnover_prev49_volume"] += 50
+        self.assertTrue(live_engine.evaluate(self.state, self.quote)["checks"]["liquidity"])
 
     def test_price_floor_is_strict(self):
         self.quote["last_price"] = 20.0
@@ -85,29 +99,59 @@ class MomentumTests(unittest.TestCase):
         self.quote["last_price"] = self.state["prev_close"]
         self.assertFalse(live_engine.evaluate(self.state, self.quote)["checks"]["momentum"])
 
-    def test_first30_volume_can_be_only_volume_confirmation(self):
-        self.state["avg_volume"] = 1e9
+    def _disable_other_volume_confirmations(self):
+        # Open at 107 keeps the intraday move below 4%; 4M volume is below the 9M daily-volume rule.
+        self.quote["ohlc"] = {"open": 107.0, "high": 110.0, "low": 107.0}
+        self.state["rvol_prev19_volume"] = 1e12
         self.state["red_max_volume"] = 1e9
+        self.state["first30_volume"] = None
+
+    def test_first30_volume_can_be_only_volume_confirmation(self):
+        self._disable_other_volume_confirmations()
         self.state["first30_volume"] = self.state["avg_volume10"] + 1
         result = live_engine.evaluate(self.state, self.quote)
         self.assertLess(result["rvol"], 1.3)
         self.assertFalse(result["pocket_pivot"])
-        self.assertTrue(result["buy"])
+        self.assertFalse(result["intraday_move_condition"])
+        self.assertTrue(result["buy"], result["checks"])
 
     def test_pocket_pivot_can_be_only_volume_confirmation(self):
-        self.state["avg_volume"] = 1e9
-        self.assertTrue(live_engine.evaluate(self.state, self.quote)["buy"])
+        self._disable_other_volume_confirmations()
+        self.state["red_max_volume"] = self.quote["volume"] - 1
+        result = live_engine.evaluate(self.state, self.quote)
+        self.assertLess(result["rvol"], 1.3)
+        self.assertTrue(result["pocket_pivot"])
+        self.assertTrue(result["buy"], result["checks"])
 
     def test_rvol_threshold_is_strict(self):
-        self.state["avg_volume"] = self.quote["volume"] / (1.3 * 30 / 375)
-        self.state["red_max_volume"] = 1e9
-        self.assertFalse(live_engine.evaluate(self.state, self.quote)["checks"]["volume_surge"])
+        self._disable_other_volume_confirmations()
+        volume = self.quote["volume"]
+        with patch.object(settings, "MIN_RVOL", 2.0):
+            # 20-day average = (prev19 + today) / 20 = volume / 2, so RVOL is exactly 2.0.
+            self.state["rvol_prev19_volume"] = 9 * volume
+            result = live_engine.evaluate(self.state, self.quote)
+            self.assertEqual(result["rvol"], 2.0)
+            self.assertFalse(result["checks"]["volume_surge"])
+            self.state["rvol_prev19_volume"] = 9 * volume - 1e6
+            self.assertTrue(live_engine.evaluate(self.state, self.quote)["checks"]["volume_surge"])
 
     def test_ipo_exemptions_and_listing_high(self):
         self.state = live_engine.build_state("IPO", self.history.iloc[:10], None)
-        self.state.update({"orb_highs": {3: 105}, "year_low": 100, "prior_tr13": 0, "ema21": 200, "prev_low": 109.0})
+        self.state.update({"orb_highs": {3: 105}, "orb_close_breaks": {3: True}, "year_low": 100,
+                           "prior_tr13": 0, "ema21": 200, "prev_low": 109.0})
         result = live_engine.evaluate(self.state, self.quote)
         self.assertTrue(result["buy"], result["checks"])
+        # 10 completed sessions: ATR uses 10 + today, turnover averages 11 sessions.
+        self.assertEqual(result["atr_days"], 11)
+        self.assertEqual(result["turnover_period_days"], 11)
+        message = live_monitor.fmt_alert("BUY", result)
+        self.assertIn("ATR 11d ", message)
+        self.assertIn("Turnover 11d avg Rs ", message)
+        self.assertIn("Strength: IPO exempt", message)
+        self.assertIn("ATR 11d ", live_monitor.fmt_alert("EP", result))
+        self.assertIn("Perf: 1W +10.0%", live_monitor.fmt_alert("EP", result))
+        short = live_engine.evaluate(live_engine.build_state("NEW", self.history.iloc[:3], None), self.quote)
+        self.assertIn("Perf: NA (3 sessions)", live_monitor.fmt_alert("EP", short))
         self.state["year_high"] = 130
         self.assertFalse(live_engine.evaluate(self.state, self.quote)["checks"]["near_high"])
 
@@ -118,7 +162,9 @@ class MomentumTests(unittest.TestCase):
         self.assertFalse(live_engine.evaluate(self.state, self.quote)["checks"]["trend"])
 
     def test_non_ipo_strength_atr_and_high_filters(self):
-        for field, value, check in [("year_low", 100, "strength"), ("prior_tr13", 0, "volatility"),
+        no_swing_moves = dict.fromkeys(self.state["swing_move_references"])
+        for field, value, check in [("swing_move_references", no_swing_moves, "strength"),
+                                     ("prior_tr13", 0, "volatility"),
                                      ("year_high", 140, "near_high")]:
             with self.subTest(check=check):
                 state = dict(self.state, **{field: value})
@@ -159,23 +205,33 @@ class MomentumTests(unittest.TestCase):
         start = datetime.now(live_engine.IST).replace(hour=9, minute=15, second=0, microsecond=0)
         candles = pd.DataFrame({
             "timestamp": pd.date_range(start, periods=60, freq="min"),
-            "high": list(range(100, 160)), "volume": 100,
+            "high": list(range(100, 160)), "close": list(range(99, 159)), "volume": 100,
         })
         self.state["orb_highs"] = {}
         live_engine.update_intraday(self.state, candles, start + timedelta(minutes=2))
         self.assertFalse(self.state["orb_highs"])
         live_engine.update_intraday(self.state, candles, start + timedelta(minutes=30))
         self.assertEqual(self.state["orb_highs"], {3: 102, 5: 104, 15: 114, 30: 129})
+        self.assertTrue(self.state["orb_close_breaks"][3])
         self.assertEqual(self.state["first30_volume"], 3000)
         live_engine.update_intraday(self.state, candles, start + timedelta(minutes=60))
         self.assertEqual(self.state["orb_highs"][60], 159)
 
-    def test_missing_opening_candle_cannot_establish_orb(self):
+    def test_missing_first_candle_still_builds_orb_from_available_candles(self):
         start = datetime.now(live_engine.IST).replace(hour=9, minute=15, second=0, microsecond=0)
         candles = pd.DataFrame({"timestamp": pd.date_range(start + timedelta(minutes=1), periods=60, freq="min"),
-                                "high": 100, "volume": 100})
+                                "high": 100, "close": 99, "volume": 100})
         self.state["orb_highs"] = {}
         live_engine.update_intraday(self.state, candles, start + timedelta(minutes=61))
+        self.assertEqual(self.state["orb_highs"], {3: 100, 5: 100, 15: 100, 30: 100, 60: 100})
+        self.assertFalse(any(self.state["orb_close_breaks"].values()))
+
+    def test_no_opening_candles_cannot_establish_orb(self):
+        start = datetime.now(live_engine.IST).replace(hour=9, minute=15, second=0, microsecond=0)
+        candles = pd.DataFrame({"timestamp": pd.date_range(start + timedelta(minutes=61), periods=5, freq="min"),
+                                "high": 100, "close": 99, "volume": 100})
+        self.state["orb_highs"] = {}
+        live_engine.update_intraday(self.state, candles, start + timedelta(minutes=70))
         self.assertFalse(self.state["orb_highs"])
 
     def test_completed_history_excludes_today(self):
@@ -198,6 +254,14 @@ class MomentumTests(unittest.TestCase):
         self.assertIn("MOMENTUM BUY", message)
         self.assertIn("ORB close: 3m", message)
         self.assertIn("52W HI -", message)
+        self.assertIn("ATR 14d ", message)
+        self.assertIn("Turnover 50d avg Rs ", message)
+        # 1W reference 90 -> +22.2% passes the >10% 1W rule; 100-based references fail 1M+.
+        self.assertIn("Strength: 1W +22.2% (>10%)", message)
+        self.assertNotIn("1M +", message)
+        # EP lists every available period (270 sessions: up to 1Y); ✓ only where the threshold passed.
+        self.assertIn("Perf: 1W +22.2% ✓ | 1M +10.0% | 3M +10.0% | 6M +10.0% | 1Y +10.0%\n",
+                      live_monitor.fmt_alert("EP", result))
         self.assertNotIn("warning only", message)
         self.assertNotIn("Live scanner only", message)
         self.assertIn("NIFTY 500", message)
@@ -217,8 +281,14 @@ class MomentumTests(unittest.TestCase):
 
     def test_monitor_dispatches_once_after_background_data_is_ready(self):
         start = datetime(2026, 10, 2, 9, 15, tzinfo=live_engine.IST)
+        # First 3 minutes set a 105 opening high; later candles close above it.
         candles = pd.DataFrame({"timestamp": pd.date_range(start, periods=60, freq="min"),
-                                "high": 105, "volume": 100})
+                                "high": [105] * 3 + [107] * 57, "close": [104] * 3 + [106] * 57,
+                                "volume": 100})
+        history = self.history.copy()
+        # Previous day near the entry (SL within 8%) and a 1W reference low enough for strength.
+        history.loc[history.index[-1], ["open", "high", "low", "close"]] = [102.0, 104.0, 102.0, 103.0]
+        history.loc[history.index[-5], "close"] = 90.0
         universe = pd.DataFrame([{"instrument_key": "NSE_EQ|TEST", "trading_symbol": "TEST"}])
         feed = {"feeds": {"NSE_EQ|TEST": {"fullFeed": {"marketFullFeed": {
             "ltpc": {"ltp": 110}, "vtt": 4000000,
@@ -252,8 +322,9 @@ class MomentumTests(unittest.TestCase):
               patch.object(live_monitor.time, "sleep", side_effect=advance),
               patch.object(live_monitor, "ThreadPoolExecutor", ImmediateExecutor),
               patch.object(live_monitor, "load_nse_equities", return_value=universe),
-              patch.object(live_monitor, "find_smallcap250_key", side_effect=RuntimeError("unavailable")),
-              patch.object(live_monitor, "historical_many", return_value={"NSE_EQ|TEST": ("TEST", self.history, None)}),
+              patch.object(live_monitor, "load_instruments", return_value=[]),
+              patch.object(live_monitor, "send_breadth_alerts") as breadth,
+              patch.object(live_monitor, "historical_many", return_value={"NSE_EQ|TEST": ("TEST", history, None)}),
               patch.object(live_monitor, "intraday_minutes", return_value=candles) as intraday,
               patch.object(live_monitor.upstox_client, "MarketDataStreamerV3") as streamer,
               patch.object(live_monitor, "send") as send):
@@ -261,8 +332,12 @@ class MomentumTests(unittest.TestCase):
             streamer.return_value.on.side_effect = lambda event, callback: callbacks.update({event: callback})
             streamer.return_value.connect.side_effect = lambda: callbacks["message"](feed)
             live_monitor.run()
-            send.assert_called_once()
-            self.assertIn("MOMENTUM BUY - TEST", send.call_args.args[0])
+            messages = [call.args[0] for call in send.call_args_list]
+            buy_messages = [m for m in messages if "MOMENTUM BUY - TEST" in m]
+            self.assertEqual(len(buy_messages), 1, messages)
+            self.assertTrue(any("MARKET OPEN SUMMARY" in m for m in messages))
+            self.assertTrue(any("MARKET CLOSE SUMMARY" in m for m in messages))
+            breadth.assert_called_once()
             intraday.assert_called_once_with("NSE_EQ|TEST")
             streamer.return_value.disconnect.assert_called_once()
 

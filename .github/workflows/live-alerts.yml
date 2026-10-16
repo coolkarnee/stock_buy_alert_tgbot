@@ -5,7 +5,7 @@ on:
 
 permissions:
   actions: read
-  contents: read
+  contents: write
 
 concurrency:
   group: nse-live-monitor-${{ github.ref_name }}
@@ -34,11 +34,31 @@ jobs:
             find prior_performance -name performance_summary.txt -exec cp {} ./performance_summary.txt \; || true
           fi
       - name: Run live scanner
+        # Stop this step before GitHub's 6h job kill so the always() save steps below still run.
+        timeout-minutes: 355
         run: python -u live_monitor.py
         env:
           UPSTOX_ACCESS_TOKEN: ${{ secrets.UPSTOX_ACCESS_TOKEN }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
+      - name: Commit market breadth history
+        if: ${{ always() }}
+        run: |
+          if [ ! -f artifacts/market_breadth.csv ]; then
+            echo "No market breadth history to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add artifacts/market_breadth.csv
+          if git diff --cached --quiet; then
+            echo "No market breadth changes to commit."
+          else
+            git commit -m "Update market breadth history"
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi
 
       - name: Save today's BUY alert log
         if: ${{ always() }}

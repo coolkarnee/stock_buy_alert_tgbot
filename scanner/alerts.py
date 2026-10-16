@@ -1,3 +1,6 @@
+import json
+import time
+from threading import Lock
 from urllib.parse import quote
 from pathlib import Path
 
@@ -33,32 +36,75 @@ def send(message, chart_symbol=None):
             print(f"Open TradingView Chart: {tradingview_chart_url(chart_symbol)}")
         return
 
-    reply_markup = None
-    if chart_symbol:
-        reply_markup = {
-            "inline_keyboard": [[{
-                "text": "Open TradingView Chart",
-                "url": tradingview_chart_url(chart_symbol),
-            }]]
-        }
-
     for chat_id in _chat_ids():
-        for chunk_number, chunk in enumerate(chunks):
-            try:
-                payload = {"chat_id": chat_id, "text": chunk}
-                # Attach the chart button to the first part of a split alert.
-                if reply_markup and chunk_number == 0:
-                    payload["reply_markup"] = reply_markup
-                r = requests.post(
-                    f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/sendMessage",
-                    json=payload,
-                    timeout=20,
-                )
-                if not r.ok:
-                    print(f"Telegram send failed for chat_id={chat_id}: HTTP {r.status_code} | {r.text}")
-            except Exception as exc:
-                print(f"Telegram send failed for chat_id={chat_id}: {exc}")
+        _send_text(chat_id, chunks, chart_symbol)
+
+
+def _chart_button(chart_symbol):
+    return {
+        "inline_keyboard": [[{
+            "text": "Open TradingView Chart",
+            "url": tradingview_chart_url(chart_symbol),
+        }]]
+    }
+
+
+def _send_text(chat_id, chunks, chart_symbol=None):
+    ok = True
+    for chunk_number, chunk in enumerate(chunks):
+        payload = {"chat_id": chat_id, "text": chunk}
+        # Attach the chart button to the first part of a split alert.
+        if chart_symbol and chunk_number == 0:
+            payload["reply_markup"] = _chart_button(chart_symbol)
+        ok = _post("sendMessage", chat_id, json=payload, timeout=20) and ok
+    return ok
+
+
+# Telegram limits: ~1 msg/s per private chat, 20 msgs/min per group, ~30 msgs/s per bot.
+PRIVATE_CHAT_INTERVAL = 1.1
+GROUP_CHAT_INTERVAL = 3.1
+MAX_RETRY_AFTER = 60
+_last_sent = {}
+_send_lock = Lock()
+
+
+def _throttle(chat_id):
+    interval = GROUP_CHAT_INTERVAL if str(chat_id).startswith("-") else PRIVATE_CHAT_INTERVAL
+    with _send_lock:
+        wait = _last_sent.get(chat_id, 0) + interval - time.monotonic()
+        if wait > 0:
+            time.sleep(wait)
+        _last_sent[chat_id] = time.monotonic()
+
+
+def _post(method, chat_id, attempts=3, **kwargs):
+    """POST to the Bot API with per-chat pacing and 429/5xx retries; return True on success."""
+    url = f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/{method}"
+    for attempt in range(1, attempts + 1):
+        _throttle(chat_id)
+        try:
+            response = requests.post(url, **kwargs)
+        except Exception as exc:
+            print(f"Telegram {method} failed for chat_id={chat_id} (attempt {attempt}): {exc}")
+            time.sleep(2)
             continue
+        if response.ok:
+            return True
+        if response.status_code == 429:
+            try:
+                retry_after = int(response.json().get("parameters", {}).get("retry_after", 5))
+            except Exception:
+                retry_after = 5
+            print(f"Telegram rate limit for chat_id={chat_id}; retrying in {retry_after}s.")
+            time.sleep(min(retry_after, MAX_RETRY_AFTER))
+            continue
+        if response.status_code >= 500:
+            print(f"Telegram {method} server error for chat_id={chat_id}: HTTP {response.status_code}")
+            time.sleep(2)
+            continue
+        print(f"Telegram {method} failed for chat_id={chat_id}: HTTP {response.status_code} | {response.text}")
+        return False
+    return False
 
 
 def send_document(path, caption=None):
@@ -89,6 +135,45 @@ def send_document(path, caption=None):
                 print(f"Telegram document send failed for chat_id={chat_id}: HTTP {response.status_code} | {response.text}")
         except Exception as exc:
             print(f"Telegram document send failed for chat_id={chat_id}: {exc}")
+
+
+TELEGRAM_CAPTION_LIMIT = 1024
+
+
+def send_photo(image_bytes, caption=None, chart_symbol=None, filename="chart.png"):
+    """Send a chart with the text; per chat, fall back to text-only if the photo fails.
+
+    If the caption exceeds Telegram's 1024-char limit, the photo and text go as two
+    messages and the chart button stays on the text message.
+    """
+    caption = str(caption or "")
+    if not settings.TELEGRAM_BOT_TOKEN or not settings.TELEGRAM_CHAT_ID:
+        print(f"Telegram photo ready ({len(image_bytes)} bytes)")
+        if caption:
+            print(caption)
+        if chart_symbol:
+            print(f"Open TradingView Chart: {tradingview_chart_url(chart_symbol)}")
+        return
+
+    fits = len(caption) <= TELEGRAM_CAPTION_LIMIT
+    data = {"caption": caption if fits else ""}
+    if chart_symbol and fits:
+        data["reply_markup"] = json.dumps(_chart_button(chart_symbol))
+    chunks = [
+        caption[index:index + TELEGRAM_SAFE_MESSAGE_LENGTH]
+        for index in range(0, len(caption), TELEGRAM_SAFE_MESSAGE_LENGTH)
+    ]
+    for chat_id in _chat_ids():
+        photo_ok = _post(
+            "sendPhoto", chat_id,
+            data={"chat_id": chat_id, **data},
+            files={"photo": (filename, image_bytes, "image/png")},
+            timeout=60,
+        )
+        if chunks and (not photo_ok or not fits):
+            if not photo_ok:
+                print(f"Photo not delivered to chat_id={chat_id}; sending text alert instead.")
+            _send_text(chat_id, chunks, chart_symbol)
 
 def format_result(r,state):
     return f"{state} | {r['symbol']}\nPrice ₹{r['price']:.2f} | Score {r['score']}/7\nPivot ₹{r['pivot']:.2f} | ATR {r['atr_pct']:.1f}%\nRS20 {r['rs20']:.1f}% | 52W distance {r['from_52w_high']:.1f}%\nSwing {r['swing_return']:.1f}% | RVOL {r['rvol']:.1f}x\nVCP={r['vcp']} | Breakout={r['vcp_breakout']} | Pocket Pivot={r['pocket_pivot']}"

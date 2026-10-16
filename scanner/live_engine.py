@@ -244,6 +244,11 @@ def evaluate(state, quote):
         for label, _, threshold in SWING_MOVE_RULES
         for reference in [state["swing_move_references"].get(label)]
     )
+    swing_moves_matched = [
+        (label, swing_moves[label], threshold)
+        for label, _, threshold in SWING_MOVE_RULES
+        if swing_moves.get(label) is not None and swing_moves[label] > threshold
+    ]
     sl_distance_pct = (price - state["prev_low"]) / price * 100
     sl_risk_valid = 0 < sl_distance_pct <= MAX_SL_DISTANCE_PCT
     position_size_pct = (
@@ -290,9 +295,12 @@ def evaluate(state, quote):
         "intraday_move_from_low": intraday_move_from_low,
         "intraday_move_condition": intraday_move_condition,
         "atr_pct": atr_pct,
+        # prior_tr13 holds up to 13 completed sessions; today's developing range is the 14th.
+        "atr_days": min(state["history_days"], 13) + 1,
         "from_high": from_high,
         "swing": swing,
         "swing_moves": swing_moves,
+        "swing_moves_matched": swing_moves_matched,
         "extension10": extension10,
         "extension21": extension21,
         "pocket_pivot": bool(pocket),

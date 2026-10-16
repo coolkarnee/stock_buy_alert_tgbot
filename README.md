@@ -9,7 +9,7 @@ This repository is an alert-only scanner. It does not place orders or manage pos
 | Entry point | Behavior |
 | --- | --- |
 | `main.py` | Downloads the current universe and about two years of daily history, evaluates each stock, prints a scan summary, sends Telegram alerts for BUY results, and writes `scan_results.csv` if there are results or per-symbol failures to report. |
-| `live_monitor.py` | Builds historical reference state, sends a six-index summary and TradingView India market-breadth snapshot 20 minutes after market open, connects to the Upstox V3 full-market WebSocket, evaluates live quotes each second, sends a final market-close summary, and sends at most one Momentum BUY and one Episodic Pivot BUY alert per symbol per day within that process. |
+| `live_monitor.py` | Builds historical reference state, sends a six-index summary and three TradingView India market-breadth alerts (advancing/declining, new highs/lows, above MAs; chart image + text) 20 minutes after market open, connects to the Upstox V3 full-market WebSocket, evaluates live quotes each second, sends a final market-close summary, and sends at most one Momentum BUY and one Episodic Pivot BUY alert per symbol per day within that process. |
 | `performance.py` | Reads the live alert CSV, fetches the day's close and post-alert intraday high, sends a Telegram summary, writes `performance.csv`, and saves a concise conclusion for the next market-open summary. |
 | `swing_performance.py` | Recomputes the persistent swing-performance sheet for every live alert until the first daily SL/EMA break. |
 | `test_live_engine.py` | Offline automated tests for momentum rules, IPO exemptions, ORB candles, feed parsing, and mocked Telegram dispatch. |
@@ -73,7 +73,28 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
+If `py` is not recognized (launcher not on PATH), use the full interpreter path instead, e.g. `& "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe" -m venv .venv`. If winget's `msstore` source fails with a certificate error, install with `winget install --id Python.Python.3.12 --source winget --scope user`. `.venv/` is git-ignored.
+
 Set `UPSTOX_ACCESS_TOKEN` for Upstox historical and streaming data. Set both `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` to deliver Telegram messages. `TELEGRAM_CHAT_ID` may contain comma-separated chat IDs. If either Telegram setting is absent, alerts are printed to standard output instead of sent.
+
+### Local quick reference (Windows)
+
+Run from the repo root. Uses the venv interpreter directly, so activation is not required.
+
+| Task | Command |
+| --- | --- |
+| Create venv (one-time) | `& "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe" -m venv .venv` |
+| Install / update deps | `.\.venv\Scripts\python.exe -m pip install -r requirements.txt` |
+| Run offline tests (28, no network) | `.\.venv\Scripts\python.exe -m unittest test_live_engine -v` |
+| Preview breadth alerts (live TradingView, prints text; no Telegram without tokens) | `.\.venv\Scripts\python.exe -c "from datetime import date; from scanner.breadth import send_breadth_alerts; send_breadth_alerts(date.today())"` |
+| Check Upstox index symbols (needs token) | `$env:UPSTOX_ACCESS_TOKEN="..."; .\.venv\Scripts\python.exe test_upstox_indices.py` |
+| Telegram connectivity (needs bot token + chat ID) | `.\.venv\Scripts\python.exe test_telegram.py` |
+| Clean generated files | `Get-ChildItem -Recurse -Directory -Filter __pycache__ \| Where-Object FullName -notlike "*\.venv\*" \| Remove-Item -Recurse -Force; Remove-Item live_alerts.csv -ErrorAction SilentlyContinue` |
+
+Notes:
+- If emoji printing fails in the Windows console (`UnicodeEncodeError`), set `$env:PYTHONIOENCODING="utf-8"` first; GitHub runners are unaffected.
+- The breadth preview writes today's row to `artifacts/market_breadth.csv`; discard it with `git restore artifacts/market_breadth.csv` (or delete it if untracked) unless you want it committed.
+- Generated, git-ignored outputs: `.venv/`, `__pycache__/`, `live_alerts.csv`.
 
 Run one of the scripts from the repository root:
 
@@ -182,6 +203,45 @@ The old 30% rise-from-52-week-low requirement has been removed. Current price is
 
 Only the existing two-year history request is used. A period qualifies only when its reference close is available; no three-year download is performed. IPOs skip this entire condition.
 
+### Live alert format
+
+Alerts show the data window behind ATR and turnover, so short-history stocks (IPOs) are easy to judge:
+
+- `ATR Nd`: N = completed sessions used (max 13) + today's developing range. The value is still `(sum of TRs) / 14`, so N < 14 means fewer real ranges and an understated ATR.
+- `Turnover Nd avg`: N = sessions in the turnover average (`turnover_period_days`, max 50, includes today).
+- `Strength:` (Momentum BUY only) lists every swing-strength period that passed, with move and threshold (`swing_moves_matched` from `evaluate()`); IPOs show `IPO exempt`.
+- `Perf:` (EP only, informational; EP does not require swing strength) lists the move for every period with an available reference close (1W, 1M, 3M, 6M, 1Y, 18M, 24M); `✓` marks a move above its swing-strength threshold. With fewer than 5 completed sessions it shows `Perf: NA (N sessions)`.
+
+```text
+MOMENTUM BUY - ELECON
+Price Rs 110.00 | Prev Day Low SL Rs 104.50
+Max Position 20.00%
+Gap +0.00% | Move +10.00% from open | +10.00% from low
+ATR 14d 29.35% | Turnover 50d avg Rs 25.4 Cr
+52W HI -0.00% | 52W LO +57.14%
+Strength: 1W +22.2% (>10%), 1M +25.0% (>19%), 3M +37.5% (>29%)
+ORB close: 3m, 5m | RVOL 1.55x | Pocket Pivot
+NIFTY 500: Bear Market
+```
+
+```text
+EPISODIC PIVOT BUY - ELECON
+Price Rs 110.00 | Gap +6.00%
+Prev Day Low SL Rs 104.50
+ATR 14d 29.35% | Turnover 50d avg Rs 25.4 Cr
+Perf: 1W +22.2% ✓ | 1M +5.8% | 3M -8.3% | 6M +15.8% | 1Y +120.0% ✓ | 18M +83.3%
+NIFTY 500: Bear Market
+```
+
+```text
+EPISODIC PIVOT BUY - KANOHAR
+Price Rs 110.00 | Gap +6.00%
+Prev Day Low SL Rs 104.50
+ATR 4d 7.27% | Turnover 4d avg Rs 29.5 Cr
+Perf: NA (3 sessions)
+NIFTY 500: Bear Market
+```
+
 ### Previous-day-low risk and position size
 
 Momentum BUY alerts are sent only when the previous-day-low stop is no more than 8% below entry:
@@ -211,11 +271,13 @@ Stocks with fewer than 252 completed daily candles are treated as IPOs: rally an
 
 EMA10/EMA21 extension is shown in alerts but is not a blocking filter by default. Set `LIVE_BLOCK_EXTENDED=True` to require at most 10% above EMA10 and 20% above EMA21. Prior three-session average volume below the preceding 20-session average is informational only and never blocks a BUY. The exact NIFTY 500 market context is informational and never blocks alerts. The market summary uses exact Upstox records only; unavailable index values are shown as `NA`, with a fetched count when fewer than six are available.
 
+Market-summary indexes are matched in the Upstox instrument master on either `trading_symbol` or `name` (normalized to uppercase alphanumerics), because some indexes differ between the two fields; for example Nifty 50 has `trading_symbol` `NIFTY` and `name` `Nifty 50`.
+
 RVOL projects cumulative volume to a 375-minute session using elapsed session time and the preceding 20-session average. Turnover uses actual cumulative volume, not projected volume. Live EMA and ATR incorporate the developing daily candle, so they may change before the close.
 
 `scanner/live_data.py` contains a Yahoo Finance INR market-cap helper for future use, but the current live monitor does not invoke it, so there is no market-cap lookup, retry, or market-cap rejection in the active signal path. Missing/incomplete opening candles cannot establish an ORB; these requests are retried at most once per minute per stock until all five ranges are available. The first eligible alert can be delayed by provider latency, queues, or rate limits. Starting after the open still reconstructs the full opening ranges from candles, rather than approximating them from observed ticks.
 
-Run the offline regression suite with `python -m unittest test_live_engine -v`. It does not contact Telegram or Upstox. Real-time delivery additionally requires valid Upstox and Telegram credentials and a running monitor each trading day.
+Run the offline regression suite with `python -m unittest test_live_engine -v`. It does not contact Telegram or Upstox. All 28 tests pass; fixtures reflect current rules (close-mode ORB needs `orb_close_breaks`, 50-day turnover > 20 Cr, RVOL from `rvol_prev19_volume`, swing-move strength, and the end-to-end monitor test mocks `load_instruments` and `send_breadth_alerts`). The monitor test writes `live_alerts.csv` in the working directory (git-ignored). Real-time delivery additionally requires valid Upstox and Telegram credentials and a running monitor each trading day.
 
 To diagnose Upstox index symbols and EMA history, run `UPSTOX_ACCESS_TOKEN=... python test_upstox_indices.py`. It lists every available `NSE_INDEX` instrument, checks the six market-summary indexes, and prints EMA10/EMA21 values. Add `--all-indexes` to calculate EMAs for every available Upstox NSE index.
 
@@ -229,7 +291,72 @@ The live monitor sends Momentum BUY and Episodic Pivot BUY messages, at most onc
 
 Telegram delivery uses the Telegram Bot API `sendMessage` endpoint. A non-success response or request exception is printed and processing continues. Missing Telegram credentials cause the message to be printed locally.
 
-Stock Telegram alerts include an `Open TradingView Chart` inline button. The button uses the cross-platform HTTPS URL `https://www.tradingview.com/chart/?symbol=NSE%3ASYMBOL`, which opens the chart in the TradingView app when the device handles the link there, or in the browser otherwise. The exchange-qualified symbol avoids ambiguity for NSE stocks. The same link is used by live Momentum/EP alerts and batch BUY alerts.
+Stock Telegram alerts include an `Open TradingView Chart` inline button. The button uses the cross-platform HTTPS URL `https://www.tradingview.com/chart/?symbol=NSE%3ASYMBOL`, which opens the chart in the TradingView app when the device handles the link there, or in the browser otherwise. The exchange-qualified symbol avoids ambiguity for NSE stocks. The same link is used by live Momentum/EP alerts and batch BUY alerts. Stock alerts are text-only by design (no rendered chart image) to keep the live monitor lightweight; the button gives one-click access to the full chart. Chart images are rendered only for the market breadth alerts.
+
+Telegram delivery (`_post()` in `scanner/alerts.py`) paces messages per chat (1.1 s for private chats, 3.1 s for group chats whose ID starts with `-`), honours HTTP 429 `retry_after` (capped at 60 s), and retries network/5xx errors up to 3 attempts. The Bot API has no daily message cap; the limits are about 1 msg/s per chat, 20 msgs/min per group, and about 30 msgs/s per bot.
+
+### TradingView Market Breadth Alerts
+
+Sent right after the open market summary (20 minutes after 09:15 IST) by `send_breadth_alerts()` in `scanner/breadth.py`. One fetch of `https://www.tradingview.com/markets/india/#stocks` is parsed from the server-rendered HTML via `data-qa-id` anchors (`market-breadth-advance-decline`, `market-breadth-highs-lows`, `market-breadth-above-ma`). Three separate Telegram messages are sent, in this order, each as a dark TradingView-style PNG chart (matplotlib, `send_photo()` in `scanner/alerts.py`) with the text as caption. Captions over 1024 chars are sent as a follow-up text; if a chart fails to render or a section fails to parse, the text is sent alone.
+
+1. **Advancing & declining** (`parse_advance_decline()`): advancing/declining counts and %, net advances, A/D ratio, up/down volume. Chart: green/red split bar plus stat tiles. Read: A/D ratio > 1 `advancers lead`, < 1 `decliners lead`.
+2. **New highs & lows** (`parse_highs_lows()`): highs, lows, and net for 1W/1M/3M/1Y. TradingView shows no numeric labels here, so counts are rebuilt from bar heights: `height% / 50 * max(count-axis label)`. Chart: diverging bars (highs up, lows down) with orange net-highs markers. Read uses the longest period (1Y).
+3. **Above moving averages** (`parse_moving_averages()`, exact `aria-valuenow`): % of stocks above 20/50/200-day MA. Chart: progress bars with 20/50/80 guide lines, plus a history line chart with oversold/overbought bands once two sessions are stored.
+
+MA judgement rules (`breadth_judgement()`):
+
+| Indicator | Condition | Judgement |
+| --- | --- | --- |
+| 200-day MA | > 50% | broader bull market |
+| 200-day MA | <= 50% | broader bear market |
+| 50-day MA and 200-day MA | <= 20% | highly oversold, bounce may come soon |
+| 50-day MA and 200-day MA | >= 80% | highly overbought, correction may come soon |
+
+History and trend (`update_breadth_history()`, `breadth_trend()`): only MA breadth is stored. Each run upserts today's row (`date`, `20-day MA`, `50-day MA`, `200-day MA`) into `artifacts/market_breadth.csv`, skips days where all three values failed to fetch, and prunes rows older than 61 days. The trend compares the last 6 stored sessions per MA: a change of at least 3 points is `going up` or `going down`, otherwise `flat`. The trend section is omitted until two sessions are stored. Tunables: `BREADTH_HISTORY_DAYS`, `BREADTH_TREND_SESSIONS`, `BREADTH_FLAT_POINTS`.
+
+Text formats (each is the caption of its chart image):
+
+```
+📈 MARKET BREADTH - ADVANCING & DECLINING
+Advancing: 2.65K (49%)
+Declining: 2.8K (51%)
+Net advances: -149
+A/D ratio: 0.95
+Up / down volume: 4.2B / 1.8B
+
+Read: decliners lead
+Source: https://www.tradingview.com/markets/india/#stocks
+```
+
+```
+🆕 MARKET BREADTH - NEW HIGHS & LOWS
+1W: Highs 1530 | Lows 1726 | Net -196
+1M: Highs 550 | Lows 816 | Net -266
+3M: Highs 295 | Lows 470 | Net -175
+1Y: Highs 187 | Lows 220 | Net -33
+
+Read (1Y): more new lows than highs
+Source: https://www.tradingview.com/markets/india/#stocks
+```
+
+```
+📊 MARKET BREADTH - ABOVE MOVING AVERAGES
+Stocks trading above moving average:
+20-day MA: 36%
+50-day MA: 32%
+200-day MA: 36%
+
+Judgement:
+200-day MA: broader bear market
+
+Trend (last 6 sessions):
+20-day MA: 48 > 45 > 41 > 40 > 38 > 36 (-12 pts, going down)
+50-day MA: 40 > 38 > 36 > 35 > 33 > 32 (-8 pts, going down)
+200-day MA: 37 > 37 > 36 > 36 > 36 > 36 (-1 pts, flat)
+Source: https://www.tradingview.com/markets/india/#stocks
+```
+
+Missing MA values show as `NA`, followed by `Breadth data fetched: X/3` and any fetch error before the source line. Unparsed A/D or highs/lows sections show `Data unavailable`.
 
 ## Swing Performance
 
@@ -262,23 +389,25 @@ There are six GitHub Actions workflows. The live alert, live performance, and sw
 | Workflow | Schedule | Action |
 | --- | --- | --- |
 | `.github/workflows/daily-scan.yml` | Manual only | Runs `main.py`, then uploads `scan_results.csv` for seven days. Artifact upload fails if the file was not created. The comment mentioning a daily scan is stale; there is no `schedule` trigger in this file. |
-| `.github/workflows/live-alerts.yml` | Manual only | Runs `live_monitor.py`. The process waits until 09:15 IST, monitors until 15:20 IST, and uploads `live_alerts.csv` even when the job fails. A concurrency group cancels an older run on the same branch. |
+| `.github/workflows/live-alerts.yml` | Manual only | Runs `live_monitor.py`. The process waits until 09:15 IST, monitors until 15:20 IST, and uploads `live_alerts.csv` even when the job fails. It then commits `artifacts/market_breadth.csv` (requires `contents: write`; rebases before push). A concurrency group cancels an older run on the same branch. |
 | `.github/workflows/live-performance.yml` | After successful live alerts and manual | Downloads the exact triggering `live-alerts.yml` artifact, runs `performance.py`, and uploads the daily report plus alert input for 30 days. |
 | `.github/workflows/swing-performance.yml` | After successful live performance and manual | Downloads the alert input, recalculates all persistent swing rows until exit or report date, commits `artifacts/swing_performance.csv`, uploads the formatted Excel workbook for 90 days, and sends it to Telegram. |
 | `.github/workflows/test-ipo-universe.yml` | Manual only | Checks out the hard-coded `Nilesh_branch_to_add_ipos` branch, installs dependencies, and calls the Upstox IPO API to print listed IPO symbols since 2026-01-01. It is not a main-branch test until its checkout ref is changed. |
 | `.github/workflows/test-telegram.yml` | Manual only | Runs the fixed Telegram connectivity message. |
 
-The daily scan and live monitor are separate jobs; the batch run does not feed state to the live process. The live performance and swing performance jobs consume workflow artifacts, while the committed swing CSV provides persistence between runs.
+The daily scan and live monitor are separate jobs; the batch run does not feed state to the live process. The live performance and swing performance jobs consume workflow artifacts, while the committed swing CSV and market-breadth CSV provide persistence between runs.
+
+GitHub-hosted jobs are hard-killed at 6 hours, and the live monitor runs until 15:20 IST, so a live run started before ~09:20 IST is killed and ends as `cancelled`/`failure`. `live-performance.yml` (and therefore `swing-performance.yml`) then shows "This job was skipped". The `Run live scanner` step has `timeout-minutes: 355`, so it is stopped before the 6h job kill and the `if: always()` steps (breadth commit, `live-alerts` upload) still run. Chosen practice: run `NSE Live Alert Performance` manually after the live run; it uses the latest live run's `live-alerts` artifact, and its success triggers swing performance automatically.
 
 ### Main-branch checklist
 
 Before enabling this reference branch in the main branch:
 
 1. Add repository or organization Actions secrets named `UPSTOX_ACCESS_TOKEN`, `TELEGRAM_BOT_TOKEN`, and `TELEGRAM_CHAT_ID`. The chat ID may be comma-separated for multiple recipients.
-2. Ensure Actions are enabled and the repository permits artifact read/write. `live-performance.yml` already declares `contents: read` and `actions: read` and uses the built-in `GITHUB_TOKEN` through `GH_TOKEN`.
+2. Ensure Actions are enabled and the repository permits artifact read/write. `live-performance.yml` already declares `contents: read` and `actions: read` and uses the built-in `GITHUB_TOKEN` through `GH_TOKEN`. `live-alerts.yml` declares `contents: write` to push `artifacts/market_breadth.csv`; branch protection must allow `github-actions[bot]` to push, otherwise only that commit step fails.
 3. Change `ref: stock_buy_alert_tgbot` in `test-ipo-universe.yml` to the intended main/default branch, or remove the explicit checkout ref so the workflow tests the selected branch. Otherwise that workflow can fail before running project code.
 4. Keep the workflow's Python 3.12 and install from the checked-in `requirements.txt`.
-5. Treat the manually started live job as a long-running external-data job: Upstox access, Yahoo Finance access, Nifty/NSE source access, and Telegram access must be available from GitHub-hosted runners. The live job waits until 09:15 IST after it is started.
+5. Treat the manually started live job as a long-running external-data job: Upstox access, Yahoo Finance access, Nifty/NSE source access, TradingView (`tradingview.com/markets/india`) access, and Telegram access must be available from GitHub-hosted runners. The live job waits until 09:15 IST after it is started.
 6. Run `test_live_engine.py` manually after merging. It is the only automated Python test file currently wired to project behavior; the Telegram and IPO workflows are integration/smoke checks.
 
 ## Repository Map
@@ -286,7 +415,8 @@ Before enabling this reference branch in the main branch:
 | File | Responsibility |
 | --- | --- |
 | `main.py` | Batch scan orchestration and CSV/console reporting |
-| `live_monitor.py` | WebSocket lifecycle, feed parsing, and BUY alert dispatch |
+| `live_monitor.py` | WebSocket lifecycle, feed parsing, BUY alert dispatch, and market summary |
+| `scanner/breadth.py` | TradingView breadth scraping, three chart+text alerts, MA history/trend |
 | `scanner/universe.py` | Nifty constituent and NSE IPO universe construction |
 | `scanner/upstox.py` | Instrument lookup, historical requests, rate limiting, and data conversion |
 | `scanner/indicators.py` | EMA and ATR calculations |
@@ -295,7 +425,7 @@ Before enabling this reference branch in the main branch:
 | `scanner/live_engine.py` | Completed-bar state and per-tick signal evaluation |
 | `scanner/live_data.py` | Live market-cap lookup, Smallcap 250 instrument lookup, and intraday candle requests |
 | `swing_performance.py` | Persistent alert performance calculation until exit |
-| `artifacts/` | Versioned latest swing-performance CSV |
+| `artifacts/` | Versioned latest swing-performance CSV and ~2-month market-breadth history (`market_breadth.csv`) |
 | `docs/stock-pattern-lab.html` | Standalone shareable web-format overview |
 | `scanner/alerts.py` | Telegram dispatch and batch alert formatting |
 | `config/settings.py` | Credentials and scanner thresholds |

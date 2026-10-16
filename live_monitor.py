@@ -1,6 +1,5 @@
 import time
 import csv
-import html
 import re
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
@@ -15,6 +14,7 @@ from google.protobuf.json_format import MessageToDict
 
 from config import settings
 from scanner.alerts import send
+from scanner.breadth import send_breadth_alerts
 from scanner.live_engine import build_state, evaluate, update_intraday, _completed
 from scanner.live_data import intraday_minutes
 from scanner.indicators import ema
@@ -27,7 +27,6 @@ from scanner.upstox import (
 )
 
 IST = ZoneInfo("Asia/Kolkata")
-TRADINGVIEW_INDIA_URL = "https://www.tradingview.com/markets/india/#stocks"
 
 MARKET_INDICES = (
     ("Nifty", "Nifty 50"),
@@ -53,7 +52,11 @@ def find_market_index_keys(instruments):
             instrument for instrument in instruments
             if instrument.get("segment") == "NSE_INDEX"
             and instrument.get("instrument_type") == "INDEX"
-            and normalize(instrument.get("trading_symbol", "")) == expected
+            # Upstox lists Nifty 50 as trading_symbol "NIFTY" with name "Nifty 50".
+            and expected in (
+                normalize(instrument.get("trading_symbol", "")),
+                normalize(instrument.get("name", "")),
+            )
         ]
         if len(matches) == 1:
             found[display_name] = matches[0]["instrument_key"]
@@ -159,47 +162,6 @@ def prior_performance_conclusion(path=Path("performance_summary.txt")):
     return text or "No prior-day performance summary available."
 
 
-def scrape_tradingview_breadth(url=TRADINGVIEW_INDIA_URL):
-    """Fetch the three TradingView India market-breadth percentages."""
-    values = {"20-day MA": None, "50-day MA": None, "200-day MA": None}
-    try:
-        response = requests.get(
-            url,
-            headers={"User-Agent": "Mozilla/5.0 (compatible; market-monitor/1.0)"},
-            timeout=20,
-        )
-        response.raise_for_status()
-        text = html.unescape(re.sub(r"<[^>]+>", " ", response.text))
-        text = re.sub(r"\s+", " ", text)
-        for label in values:
-            base_label = label.removesuffix(" MA")
-            match = re.search(
-                rf"{re.escape(base_label)}\s*(?:MA)?\s*[:\-]?\s*(\d+(?:\.\d+)?)\s*%",
-                text,
-                flags=re.IGNORECASE,
-            )
-            if match:
-                values[label] = float(match.group(1))
-    except Exception as exc:
-        return values, str(exc)
-    return values, None
-
-
-def fmt_breadth_alert(values, error=None):
-    lines = [
-        "📊 TRADINGVIEW MARKET BREADTH",
-        "Stocks trading above moving average:",
-        *(f"{label}: {value:.0f}%" if value is not None else f"{label}: NA"
-          for label, value in values.items()),
-    ]
-    fetched = sum(value is not None for value in values.values())
-    if fetched < len(values):
-        lines.extend(["", f"Breadth data fetched: {fetched}/{len(values)}"])
-    if error:
-        lines.extend(["", f"TradingView breadth fetch error: {error}"])
-    lines.append(f"Source: {TRADINGVIEW_INDIA_URL}")
-    return "\n".join(lines)
-
 def as_dict(message):
     if isinstance(message, dict):
         return message
@@ -229,6 +191,29 @@ def extract_quote(feed):
         "timestamp": str(ltpc.get("ltt") or feed.get("currentTs", "")),
     }
 
+def _atr_turnover_line(r):
+    return (f"ATR {r['atr_days']}d {r['atr_pct']:.2f}% | "
+            f"Turnover {r['turnover_period_days']}d avg Rs {r['turnover_cr']:.1f} Cr")
+
+
+def _strength_line(r):
+    if r["is_ipo"]:
+        return "Strength: IPO exempt"
+    matched = ", ".join(f"{label} {move:+.1f}% (>{threshold:g}%)"
+                        for label, move, threshold in r["swing_moves_matched"])
+    return f"Strength: {matched or 'none'}"
+
+
+def _performance_line(r):
+    # EP does not require swing strength, so show every available period; ✓ marks a passed threshold.
+    matched = {label for label, _, _ in r["swing_moves_matched"]}
+    moves = [
+        f"{label} {move:+.1f}%{' ✓' if label in matched else ''}"
+        for label, move in r["swing_moves"].items() if move is not None
+    ]
+    return f"Perf: {' | '.join(moves)}" if moves else f"Perf: NA ({r['history_days']} sessions)"
+
+
 def fmt_alert(kind, r):
     market = r.get("market_regime", "Choppy Market")
     benchmark = r.get("market_benchmark", "NIFTY 500")
@@ -238,7 +223,8 @@ def fmt_alert(kind, r):
             f"EPISODIC PIVOT BUY - {r['symbol']}\n"
             f"Price Rs {r['price']:.2f} | Gap {(r['day_open'] / r['prev_close'] - 1) * 100:+.2f}%\n"
             f"Prev Day Low SL Rs {r['prev_low']:.2f}\n"
-            f"ATR {r['atr_pct']:.2f}% | Turnover Rs {r['turnover_cr']:.1f} Cr\n"
+            f"{_atr_turnover_line(r)}\n"
+            f"{_performance_line(r)}\n"
             f"{benchmark}: {market}"
         )
     volume_confirmations = []
@@ -256,8 +242,9 @@ def fmt_alert(kind, r):
         f"Max Position {r['position_size_pct']:.2f}%\n"
         f"Gap {(r['day_open'] / r['prev_close'] - 1) * 100:+.2f}% | "
         f"Move {r['intraday_move']:+.2f}% from open | {r['intraday_move_from_low']:+.2f}% from low\n"
-        f"ATR {r['atr_pct']:.2f}% | Turnover Rs {r['turnover_cr']:.1f} Cr\n"
-        f"52W HI {-r['from_high']:+.2f}% | 52W LO {r['swing']:+.2f}%"
+        f"{_atr_turnover_line(r)}\n"
+        f"52W HI {-r['from_high']:+.2f}% | 52W LO {r['swing']:+.2f}%\n"
+        f"{_strength_line(r)}"
         f"{volume_line}\n"
         f"{benchmark}: {market}"
     )
@@ -463,8 +450,10 @@ def run():
                         previous_conclusion=prior_performance_conclusion(),
                     )
                 )
-                breadth_values, breadth_error = scrape_tradingview_breadth()
-                send(fmt_breadth_alert(breadth_values, breadth_error))
+                try:
+                    send_breadth_alerts(datetime.now(IST).date())
+                except Exception as exc:
+                    print(f"Market breadth alerts failed: {exc}")
                 open_summary_sent = True
             evaluated = []
             for instrument_key, quote in quotes.items():
@@ -482,7 +471,7 @@ def run():
             # Keep the delivery order explicit: market context/breadth has
             # already been sent above, then EP, then Momentum BUY. This does
             # not alter either signal's checks or once-per-day suppression.
-            for _, alert_key, result in evaluated:
+            for instrument_key, alert_key, result in evaluated:
                 if result["episodic_pivot"] and alert_key not in sent_ep:
                     sent_ep.add(alert_key)
                     with alert_log.open("a", newline="", encoding="utf-8") as f:
@@ -497,7 +486,7 @@ def run():
                         ])
                     send(fmt_alert("EP", result), chart_symbol=result["symbol"])
 
-            for _, alert_key, result in evaluated:
+            for instrument_key, alert_key, result in evaluated:
                 if result["buy"] and alert_key not in sent_buy:
                     sent_buy.add(alert_key)
                     with alert_log.open("a", newline="", encoding="utf-8") as f:

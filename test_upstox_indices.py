@@ -38,6 +38,7 @@ def index_instruments(instruments):
         (
             str(item.get("trading_symbol", "")),
             item.get("instrument_key", ""),
+            str(item.get("name", "")),
         )
         for item in instruments
         if item.get("segment") == "NSE_INDEX"
@@ -52,7 +53,7 @@ def select_targets(available, all_indexes=False):
     for display_name, expected_symbol in TARGETS:
         matches = [
             item for item in available
-            if normalize(item[0]) == normalize(expected_symbol)
+            if normalize(expected_symbol) in (normalize(item[0]), normalize(item[2]))
         ]
         if len(matches) != 1:
             print(
@@ -75,18 +76,18 @@ def main():
 
     available = index_instruments(load_instruments())
     print(f"Upstox NSE_INDEX instruments found: {len(available)}")
-    for symbol, key in available:
-        print(f"AVAILABLE | {symbol} | {key}")
+    for symbol, key, name in available:
+        print(f"AVAILABLE | {symbol} | {name} | {key}")
 
     selected = select_targets(available, all_indexes=args.all_indexes)
     if not settings.UPSTOX_ACCESS_TOKEN:
         print("EMA SKIPPED: UPSTOX_ACCESS_TOKEN is not configured.")
         return 0
 
-    rows = pd.DataFrame(selected, columns=["trading_symbol", "instrument_key"])
+    rows = pd.DataFrame(selected, columns=["trading_symbol", "instrument_key", "name"])
     results = historical_many(rows, years=2, max_workers=settings.UPSTOX_MAX_WORKERS)
     print("\nEMA RESULTS")
-    for symbol, key in selected:
+    for symbol, key, _ in selected:
         _, frame, error = results.get(key, (symbol, pd.DataFrame(), "missing"))
         if error or frame.empty:
             print(f"HISTORY FAILED | {symbol} | {key} | {error or 'empty'}")

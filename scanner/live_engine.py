@@ -8,6 +8,7 @@ from scanner.indicators import ema
 
 IST = ZoneInfo("Asia/Kolkata")
 ORB_WINDOWS = (3, 5, 15, 30, 60)
+EP_ORB_WINDOWS = (3, 5, 15, 60)
 MAX_SL_DISTANCE_PCT = 8.0
 PORTFOLIO_RISK_PCT = 1.0
 MAX_POSITION_SIZE_PCT = 25.0
@@ -90,6 +91,10 @@ def build_state(symbol, df, nifty_df):
         "orb_close_breaks": {},
         "first30_volume": None,
         "ep_quote": None,
+        "ep_radar_open": None,
+        "ep_radar_highs": {},
+        "ep_radar_volume": 0.0,
+        "ep_orb_breakouts": {},
         # RVOL baseline inputs matching the PineScript calculation.
         "rvol_traded_days": len(history),
         "rvol_cum_volume": float(history.volume.sum()),
@@ -112,6 +117,7 @@ def update_intraday(state, candles, now=None):
     bars["timestamp"] = pd.to_datetime(bars["timestamp"], utc=True).dt.tz_convert(IST)
     bars = bars[(bars.timestamp >= start) & (bars.timestamp + pd.Timedelta(minutes=1) <= now)]
     bars = bars.drop_duplicates("timestamp").sort_values("timestamp")
+    update_ep_radar(state, bars, start)
     ep_columns = ["open", "high", "low", "close", "volume"]
     if not bars.empty and set(ep_columns).issubset(bars.columns):
         values = bars[ep_columns]
@@ -161,6 +167,116 @@ def update_intraday(state, candles, now=None):
         )
         if window == 30:
             state["first30_volume"] = float(opening.volume.sum())
+
+
+def _live_turnover_metrics(state, price, volume):
+    turnover_traded_days = state["turnover_traded_days"] + 1
+    if turnover_traded_days < 50:
+        avg_vol50 = (state["turnover_cum_volume"] + volume) / max(1, turnover_traded_days)
+        avg_price50 = (state["turnover_cum_close"] + price) / max(1, turnover_traded_days)
+    else:
+        avg_vol50 = (state["turnover_prev49_volume"] + volume) / 50.0
+        avg_price50 = (state["turnover_prev49_close"] + price) / 50.0
+    turnover_raw = avg_price50 * avg_vol50
+    turnover_cr = turnover_raw / 1e7
+    return turnover_traded_days, turnover_raw, turnover_cr
+
+
+def _orb_mode():
+    mode = getattr(settings, "OPENING_RANGE_BREAKOUT_MODE", "close").lower()
+    return "spot" if mode == "spot" else "close"
+
+
+def _confirmed_orb_windows(highs, close_breaks, price, minutes):
+    mode = _orb_mode()
+    return [
+        window for window, high in highs.items()
+        if minutes >= window and (
+            price > high if mode == "spot" else close_breaks.get(window, False)
+        )
+    ]
+
+
+def _ep_radar_quality_passes(state, price, volume):
+    current_ema21 = state["ema21"] + 2 / 22 * (price - state["ema21"])
+    _, _, turnover_cr = _live_turnover_metrics(state, price, volume)
+    return (
+        price > current_ema21
+        and price > settings.MIN_PRICE
+        and turnover_cr > settings.MIN_TURNOVER_CR
+    )
+
+
+def update_ep_radar(state, bars, start):
+    if bars.empty or not {"open", "high", "low", "close", "volume"}.issubset(bars.columns):
+        return
+    prices = bars[["open", "high", "low", "close"]]
+    valid = (
+        prices.notna().all(axis=1)
+        & prices.gt(0).all(axis=1)
+        & prices.lt(float("inf")).all(axis=1)
+        & bars["volume"].notna()
+        & bars["volume"].ge(0)
+        & bars["volume"].lt(float("inf"))
+    )
+    bars = bars[valid]
+    if bars.empty or bars.timestamp.iloc[0] != start:
+        return
+    opening_price = float(bars.open.iloc[0])
+    if opening_price <= state["prev_close"] * (1 + settings.EP_MIN_GAP_PCT / 100):
+        return
+    state["ep_radar_open"] = opening_price
+    bars = bars.copy()
+    bars["cum_volume"] = bars["volume"].cumsum()
+    state["ep_radar_volume"] = float(bars["cum_volume"].iloc[-1])
+    for window in EP_ORB_WINDOWS:
+        if window in state["ep_orb_breakouts"]:
+            continue
+        window_end = start + pd.Timedelta(minutes=window)
+        opening = bars[bars.timestamp < window_end]
+        expected = pd.date_range(start, periods=window, freq="min")
+        if len(opening) != window or not opening.timestamp.isin(expected).all():
+            continue
+        opening_high = float(opening.high.max())
+        state["ep_radar_highs"][window] = opening_high
+        if _orb_mode() == "spot":
+            continue
+        breaks = bars[(bars.timestamp >= window_end) & (bars.close > opening_high)]
+        for row in breaks.itertuples(index=False):
+            breakout_price = float(row.close)
+            if _ep_radar_quality_passes(state, breakout_price, float(row.cum_volume)):
+                state["ep_orb_breakouts"][window] = {
+                    "price": breakout_price,
+                    "range_high": opening_high,
+                    "candle_time": row.timestamp.isoformat(),
+                    "orb_mode": "close",
+                }
+                break
+
+
+def update_ep_radar_spot(state, quote, now=None):
+    if _orb_mode() != "spot" or state["ep_radar_open"] is None:
+        return
+    now = now or datetime.now(IST)
+    start = datetime.combine(now.date(), dtime(9, 15), tzinfo=IST)
+    minutes = (now - start).total_seconds() / 60
+    if not 0 <= minutes < 375:
+        return
+    price = float(quote.get("last_price") or 0)
+    # Completed candles provide a volume baseline if the tick omits volume.
+    volume = max(float(quote.get("volume") or 0), state["ep_radar_volume"])
+    if not (0 < price < float("inf") and 0 <= volume < float("inf")):
+        return
+    if not _ep_radar_quality_passes(state, price, volume):
+        return
+    for window in _confirmed_orb_windows(state["ep_radar_highs"], {}, price, minutes):
+        if window not in state["ep_orb_breakouts"]:
+            state["ep_orb_breakouts"][window] = {
+                "price": price,
+                "range_high": state["ep_radar_highs"][window],
+                "quote_time": quote.get("timestamp") or now.isoformat(),
+                "orb_mode": "spot",
+            }
 
 
 def _market_minutes():
@@ -227,31 +343,15 @@ def evaluate(state, quote):
     # cond12_Liquidity = turnover > inp_minTurnoverRaw
     #
     # The current developing daily volume and close are included.
-    turnover_traded_days = state["turnover_traded_days"] + 1
-    if turnover_traded_days < 50:
-        avg_vol50 = (state["turnover_cum_volume"] + volume) / max(1, turnover_traded_days)
-        avg_price50 = (state["turnover_cum_close"] + price) / max(1, turnover_traded_days)
-    else:
-        avg_vol50 = (state["turnover_prev49_volume"] + volume) / 50.0
-        avg_price50 = (state["turnover_prev49_close"] + price) / 50.0
-    turnover_raw = avg_price50 * avg_vol50
-    turnover_cr = turnover_raw / 1e7
+    turnover_traded_days, turnover_raw, turnover_cr = _live_turnover_metrics(state, price, volume)
     liquidity_condition = turnover_cr > settings.MIN_TURNOVER_CR
 
     pocket = day_open > 0 and price > day_open and state["red_max_volume"] > 0 and volume > state["red_max_volume"]
     first30_surge = state["first30_volume"] is not None and state["first30_volume"] > state["avg_volume10"]
-    orb_mode = getattr(settings, "OPENING_RANGE_BREAKOUT_MODE", "close").lower()
-    if orb_mode == "spot":
-        orb_windows = [
-            window for window, high in state["orb_highs"].items()
-            if minutes >= window and price > high
-        ]
-    else:
-        orb_mode = "close"
-        orb_windows = [
-            window for window in state["orb_highs"]
-            if minutes >= window and state.get("orb_close_breaks", {}).get(window, False)
-        ]
+    orb_mode = _orb_mode()
+    orb_windows = _confirmed_orb_windows(
+        state["orb_highs"], state.get("orb_close_breaks", {}), price, minutes,
+    )
     breakout_reference = (
         state["prev_high"]
         if state["dark_red_previous_candle"]

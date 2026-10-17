@@ -44,6 +44,7 @@
   <div class="grid">
     <section class="card"><h3>Momentum BUY</h3><p>Every live strength, breakout, liquidity, opening-range, swing-period, and SL-risk condition must pass.</p></section>
     <section class="card"><h3>Episodic Pivot BUY</h3><p>An independent alert for an opening gap above 4.5%, price above developing EMA21, price above ₹20, ATR qualification, and liquidity. It waits for the first opening minute to finish.</p></section>
+    <section class="card"><h3>EP radar opening-range BUY</h3><p>For any stock opening more than 4.5% higher: opening-range confirmation on 3, 5, 15, or 60 minutes using the same close/spot choice as Momentum, while also staying above EMA21, above Rs 20, and above Rs 20 Cr turnover.</p></section>
     <section class="card"><h3>Swing performance</h3><p>Every alert uses the previous trading day's low as the initial SL. A +10% move in Bear/Choppy context or +15% in Bull context books part of the position; the remainder trails on daily 10 EMA/breakeven, then 20 EMA. Rows are marked as Trade open, Partial exit, or Full exit through the report date.</p></section>
   </div>
 
@@ -57,6 +58,7 @@
   <p>Gap-up stocks can be volatile: they may continue higher, move sideways, or quickly give back the gap. The alert is therefore a prompt for further research and risk planning, not confirmation of a guaranteed return.</p>
   <p class="note">The message can arrive only during the live monitoring session after the market opens. Every required condition for that category must be satisfied at the same time. At most one Momentum BUY and one Episodic Pivot BUY is sent for the same stock during a run. No automatic order is placed.</p>
   <p>Telegram delivery requires the Telegram settings. Without them, the alert appears in the workflow log.</p>
+  <p class="note">EP BUY never suppresses Momentum BUY: the same stock can receive both when their own conditions pass. The separate EP radar scan can add one breakout message per range, up to four per stock per session.</p>
 
   <h2>Momentum BUY conditions</h2>
   <p>All mandatory conditions must pass at the same time:</p>
@@ -108,6 +110,18 @@
   <p class="note">EP alerts do not require Momentum BUY volume confirmation, momentum, breakout, rally-strength, near-high, or opening-range conditions.</p>
   <p>EP uses today's completed candles while keeping the previous trading day's close as the gap reference. Starting monitoring before the market opens does not skip the signal. If other conditions only qualify later, the alert may arrive later in the session.</p>
 
+  <h2>EP radar: a simpler gap-and-breakout watch</h2>
+  <p>Every stock with a verified opening gap strictly above 4.5% enters this radar, even if the full EP BUY conditions fail. Its opening 3-minute, 5-minute, 15-minute and 1-hour highs become four separate reference levels.</p>
+  <p>The radar uses the same ORB confirmation choice as Momentum: <strong>close</strong> waits for a completed candle close strictly above the range high; <strong>spot</strong> uses the live price strictly above the high after the range forms. A touch or equal price is not enough. The qualifying price must also be above EMA21, above Rs 20, and satisfy turnover above Rs 20 Cr. Other Momentum filters are not required for this scan. Missing opening candles must become available before a range can qualify.</p>
+  <p>The current default is close confirmation using completed one-minute candles, not a requirement to wait for another full 1-hour candle. Spot confirmation does not wait for a breakout candle to close. Each of the four ranges still alerts once per stock per session. Full EP and Momentum BUY alerts stay independent.</p>
+  <pre>EP RADAR ORB BUY - EXAMPLE | 3m
+Sector: Refineries
+Breakout Close Rs 110.00 | Opening Gap +4.60%
+Opening 3m High Rs 105.00
+ORB confirmation: close
+Prev Day Low SL Rs 102.00</pre>
+  <p>The alert identifies the confirmation mode: close messages show the confirming candle's close and timestamp; spot messages show the live spot price and quote time. Delayed data can produce later delivery; a displayed earlier price does not guarantee that entry was available when you received the message.</p>
+
   <h2>Sector context with every stock alert</h2>
   <p>Momentum BUY and Episodic Pivot BUY messages include the company's <strong>sector</strong> as classified by Upstox, for example Refineries.</p>
   <p>Sector labels come from Upstox's company profiles, matched using each stock's ISIN. When no usable sector is available, the alert shows <strong>Sector: NA</strong> and the stock is not rejected. Fetching a profile can add delivery time. Sector is context for traders, not another buy condition.</p>
@@ -125,11 +139,12 @@ Max Position 20.00%
   <p>These examples illustrate the layout only. They are not actual stock signals. Both alert types include a button to open the stock's TradingView chart.</p>
 
   <h2>End-of-day review: where did today's alerts come from?</h2>
-  <p>After the stock-by-stock close and post-alert-high performances, the daily report groups today's alerts by sector. Each sector shows total alerts, Momentum BUY alerts, EP alerts, and distinct stocks, including alerts whose price-performance data is unavailable.</p>
+  <p>Daily and swing returns use the <strong>first alert's buy price and time for each stock that day</strong>. Later EP, Momentum, or radar messages are confirmations, not extra trades or replacement entry prices. If Momentum arrives first, its entry is used; if EP or a radar breakout arrives first, that entry is used.</p>
+  <p>After stock-by-stock performances, the daily report groups all signal events by sector. Each sector shows total alerts, Momentum BUY alerts, EP alerts, distinct stocks, and EP radar ORB alerts, including events whose price-performance data is unavailable.</p>
   <pre>SECTOR ALERT BREAKDOWN
-Specialty Chemicals: 3 alerts | 2 Momentum BUY | 1 EP | 2 distinct stocks
-Software - Application: 1 alerts | 1 Momentum BUY | 0 EP | 1 distinct stocks</pre>
-  <p class="note">These counts show signal concentration, not winning trades or guaranteed sector leadership. A stock with both EP and Momentum alerts counts as two alert events but one distinct stock within its sector. Missing classifications appear together under NA.</p>
+Specialty Chemicals: 4 alerts | 1 Momentum BUY | 1 EP | 1 distinct stocks | 2 EP radar ORB
+Software - Application: 1 alerts | 1 Momentum BUY | 0 EP | 1 distinct stocks | 0 EP radar ORB</pre>
+  <p class="note">Signal counts are not winning-trade counts. Several signals can describe one stock and one first-entry trade; all signals stay in the alert log. Missing classifications appear together under NA.</p>
 
   <h2>Opening-range mode</h2>
   <p>By default, Momentum requires a completed candle to close above an opening-range high, rather than simply touching or briefly crossing it. An optional spot mode uses the live price crossing instead. EP does not need this opening-range breakout.</p>
@@ -144,7 +159,7 @@ Software - Application: 1 alerts | 1 Momentum BUY | 0 EP | 1 distinct stocks</pr
   <p>NIFTY 500 provides the market context when available; it is informational, not a buy gate. A six-index market summary and market-breadth review normally arrive 20 minutes after the open, separately from stock signals. Unavailable index values are shown as NA. Momentum's stop-distance and position-size checks remain separate from EP.</p>
 
   <h2>Persistent performance sheet</h2>
-  <p>The swing report follows each alert beyond the day of entry. The Excel workbook is sent to Telegram with an overall dashboard and weekly trade sections. Every trade row includes its sector, entry price, previous-day-low stop, latest close, performance, and status. Newly recorded partial or full exits are also announced with sector context.</p>
+  <p>The swing report follows the first alert per stock per trading day beyond entry. Later same-day signals do not create extra swing rows or change the entry. The Excel workbook is sent to Telegram with an overall dashboard and weekly trade sections. Every trade row includes its sector, first entry price, previous-day-low stop, latest close, performance, and status. Newly recorded partial or full exits are also announced with sector context.</p>
   <p>In Bear or Choppy entry context, reaching +10% books 30% of the position; in Bull context, reaching +15% books 20%. The remaining position is monitored using breakeven and daily closing-basis EMA rules. A 10 EMA close break exits half of the remaining size; a 20 EMA close break or breakeven break exits the remainder. These are retrospective calculations, not executed orders, and actual trading results may differ.</p>
   <p>Recorded sector labels stay with the alert. Older entries without an sector are filled where the provider has a classification; those backfilled labels describe the company now, not necessarily at the historic entry date.</p>
   <table>
@@ -153,7 +168,7 @@ Software - Application: 1 alerts | 1 Momentum BUY | 0 EP | 1 distinct stocks</pr
       <tr><td>Weekly number</td><td>Easy reference number restarting within each week's Excel section.</td></tr>
       <tr><td>Performance As Of Date</td><td>Date through which the report was computed.</td></tr>
       <tr><td>Ticker Name / Buy Price / Entry Day SL / Latest Close</td><td>Alert symbol, entry price, previous-day-low stop, and latest daily closing price used in the report.</td></tr>
-      <tr><td>Alert Type / Alert Date / Alert Time</td><td>Momentum or EP category and entry timestamp.</td></tr>
+      <tr><td>Alert Type / Alert Date / Alert Time</td><td>The earliest signal's category (Momentum, EP, or EP radar ORB) and entry timestamp.</td></tr>
       <tr><td>SL Hit Date / SL Type</td><td>Latest action date and whether it was previous-day-low SL, breakeven SL, profit booking, 10 DEMA closing-basis action, or 20 DEMA closing-basis exit.</td></tr>
       <tr><td>Holding Days</td><td>Trading sessions from alert through exit, or through the report date while open.</td></tr>
       <tr><td>Performance %</td><td>Return from buy price to the latest close, with weighted realized and remaining-position performance after partial exits.</td></tr>
@@ -166,7 +181,7 @@ Software - Application: 1 alerts | 1 Momentum BUY | 0 EP | 1 distinct stocks</pr
   <h2>Your daily reporting journey</h2>
   <pre>Live monitoring starts manually
         ↓
-Momentum / EP alerts with sector + TradingView button
+Independent Momentum / EP / EP radar ORB alerts with sector
         ↓
 End-of-day stock performance + sector alert counts
         ↓

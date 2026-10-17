@@ -9,6 +9,7 @@ import pandas as pd
 from scanner.alerts import send
 from scanner.live_data import intraday_minutes
 from scanner.sector import resolve_sector
+from scanner.alert_history import first_daily_alerts
 from scanner.upstox import load_nse_equities, current_day_daily
 
 IST = ZoneInfo("Asia/Kolkata")
@@ -40,8 +41,9 @@ def sector_summary(alerts):
             f"{sector}: {sum(counts.values())} alerts | "
             f"{counts['BUY']} Momentum BUY | {counts['EP']} EP | "
             f"{len(group['symbols'])} distinct stocks"
+            f" | {sum(count for kind, count in counts.items() if kind.startswith('EP_ORB_'))} EP radar ORB"
         )
-    lines.append("Counts are alert events, not winning trades; a stock can have both alert types.")
+    lines.append("Counts are signal events, not winning trades; one stock can have multiple alert types.")
     return lines
 
 
@@ -73,12 +75,13 @@ def run():
     for alert in alerts:
         alert["sector"] = resolve_sector(alert["symbol"], alert.get("sector"))
 
+    entries = first_daily_alerts(alerts)
     universe = load_nse_equities()
     key_by_symbol = dict(zip(universe.trading_symbol, universe.instrument_key))
 
     rows = []
 
-    for alert in alerts:
+    for alert in entries:
         symbol = alert["symbol"]
         alert_price = float(alert["alert_price"])
         alert_time_raw = alert.get("alert_time_ist", "")
@@ -177,9 +180,10 @@ def run():
 
     rows = [
         (*row, alert["sector"], alert.get("alert_type") or "BUY")
-        for row, alert in zip(rows, alerts)
+        for row, alert in zip(rows, entries)
     ]
     lines = [f"📊 LIVE ALERT PERFORMANCE | {today}", ""]
+    lines.append(f"{len(alerts)} signal events | {len(entries)} first-entry stock trades; later signals are confirmations.")
 
     for (
         symbol,

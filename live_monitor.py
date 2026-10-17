@@ -15,7 +15,7 @@ from google.protobuf.json_format import MessageToDict
 from config import settings
 from scanner.alerts import send
 from scanner.breadth import send_breadth_alerts
-from scanner.live_engine import build_state, evaluate, update_intraday, _completed
+from scanner.live_engine import build_state, evaluate, update_intraday, update_ep_radar_spot, _completed, EP_ORB_WINDOWS
 from scanner.live_data import intraday_minutes
 from scanner.indicators import ema
 from scanner.sector import get_sector, UNAVAILABLE_SECTOR
@@ -152,6 +152,7 @@ def market_summary(phase, index_states, index_quotes, previous_conclusion=None, 
         lines.extend(["", "Yesterday's intraday alert performance conclusion:", previous_conclusion])
     if alert_counts is not None:
         lines.extend(["", f"Today's alerts: {alert_counts['buy']} Momentum BUY | {alert_counts['ep']} EP"])
+        lines.append(f"EP radar ORB alerts: {alert_counts.get('ep_orb', 0)}")
     return "\n".join(lines)
 
 
@@ -261,6 +262,27 @@ def market_open_close():
     end = datetime.combine(now.date(), dtime(15, 20), tzinfo=IST)
     return start, end
 
+
+def fmt_ep_orb_alert(state, window, breakout):
+    gap = (state["ep_radar_open"] / state["prev_close"] - 1) * 100
+    spot = breakout["orb_mode"] == "spot"
+    price_label = "Spot Price" if spot else "Breakout Close"
+    time_line = (
+        f"Spot quote time: {breakout['quote_time']}"
+        if spot else f"1m candle start: {breakout['candle_time']}"
+    )
+    return (
+        f"EP RADAR ORB BUY - {state['symbol']} | {window}m\n"
+        f"Sector: {state.get('sector', UNAVAILABLE_SECTOR)}\n"
+        f"{price_label} Rs {breakout['price']:.2f} | Opening Gap {gap:+.2f}%\n"
+        f"Opening {window}m High Rs {breakout['range_high']:.2f}\n"
+        f"ORB confirmation: {breakout['orb_mode']}\n"
+        f"{time_line}\n"
+        f"Prev Day Low SL Rs {state['prev_low']:.2f}\n"
+        "EP gap radar + configured ORB confirmation. Requires price > EMA21, > Rs 20, and turnover > Rs 20 Cr."
+    )
+
+
 def run():
     alert_log = Path("live_alerts.csv")
     with alert_log.open("w", newline="", encoding="utf-8") as f:
@@ -339,6 +361,7 @@ def run():
 
     sent_buy = set()
     sent_ep = set()
+    sent_ep_orb = set()
     latest_quotes = {}
     index_quotes = {}
     index_name_by_key = {key: name for name, key in index_keys.items()}
@@ -465,6 +488,7 @@ def run():
             ep_evaluated = []
             for instrument_key, quote in quotes.items():
                 state = states[instrument_key]
+                update_ep_radar_spot(state, quote)
                 alert_key = (datetime.now(IST).date(), state["symbol"])
                 if market_context["above_ema"] is not None:
                     state["market_above_ema"] = market_context["above_ema"]
@@ -499,7 +523,12 @@ def run():
                     and (len(state["orb_highs"]) < 5
                          or (result["orb_mode"] == "close" and not result["orb_windows"]))
                 )
-                if ((needs_ep_data or needs_orb_data) and instrument_key not in pending
+                needs_ep_orb_data = (
+                    (state["ep_radar_open"] is not None or ep_gap_candidate)
+                    and any((*alert_key, window) not in sent_ep_orb for window in EP_ORB_WINDOWS)
+                    and datetime.now(IST) >= start + timedelta(minutes=1)
+                )
+                if ((needs_ep_data or needs_orb_data or needs_ep_orb_data) and instrument_key not in pending
                         and time.monotonic() >= next_refresh.get(instrument_key, 0)):
                     pending[instrument_key] = pool.submit(fetch_signal_data, instrument_key)
                     next_refresh[instrument_key] = time.monotonic() + 60
@@ -541,6 +570,27 @@ def run():
                         ])
                     send(fmt_alert("BUY", result), chart_symbol=result["symbol"])
 
+            for instrument_key in quotes:
+                state = states[instrument_key]
+                for window, breakout in state["ep_orb_breakouts"].items():
+                    alert_key = (datetime.now(IST).date(), state["symbol"], window)
+                    if alert_key in sent_ep_orb:
+                        continue
+                    state["sector"] = get_sector(state["symbol"])
+                    with alert_log.open("a", newline="", encoding="utf-8") as f:
+                        csv.writer(f).writerow([
+                            datetime.now(IST).date().isoformat(),
+                            datetime.now(IST).isoformat(),
+                            f"EP_ORB_{window}M",
+                            state["symbol"],
+                            f'{breakout["price"]:.2f}',
+                            f'{state["prev_low"]:.2f}',
+                            state.get("market_regime", ""),
+                            state["sector"],
+                        ])
+                    send(fmt_ep_orb_alert(state, window, breakout), chart_symbol=state["symbol"])
+                    sent_ep_orb.add(alert_key)
+
             now = time.time()
             if now - last_log >= 60:
                 last_log = now
@@ -555,7 +605,7 @@ def run():
                         "CLOSE",
                         index_states,
                         dict(index_quotes),
-                        alert_counts={"buy": len(sent_buy), "ep": len(sent_ep)},
+                        alert_counts={"buy": len(sent_buy), "ep": len(sent_ep), "ep_orb": len(sent_ep_orb)},
                     )
                 )
             else:

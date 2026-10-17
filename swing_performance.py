@@ -13,6 +13,7 @@ from scanner.alerts import send, send_document
 from scanner.upstox import current_day_daily, historical_daily, load_nse_equities
 from scanner.indicators import ema
 from scanner.sector import known_sector, resolve_sector
+from scanner.alert_history import first_daily_alerts
 
 ARTIFACT_DIR = Path("artifacts")
 OUTPUT_FILE = ARTIFACT_DIR / "swing_performance.csv"
@@ -46,7 +47,7 @@ COLUMN_DESCRIPTIONS = [
     "Alert/buy price used for return calculation.",
     "Previous trading day's low; initial protective stop.",
     "Latest daily closing price as of Performance As Of Date.",
-    "BUY or EP alert type.",
+    "First alert type: BUY, EP, or EP_ORB_3M/5M/15M/60M.",
     "Date on which the alert was generated.",
     "IST time at which the alert was generated.",
     "Date of the latest exit or partial action.",
@@ -508,7 +509,10 @@ def run():
     universe = load_nse_equities()
     key_by_symbol = dict(zip(universe.trading_symbol, universe.instrument_key))
     output = []
-    for alert in records.values():
+    entries = first_daily_alerts(
+        records.values(), symbol_field="Ticker Name", time_field="Date Time", date_field="Alert Date"
+    )
+    for alert in entries:
         alert["Sector"] = resolve_sector(alert["Ticker Name"], alert.get("Sector"))
         key = key_by_symbol.get(alert["Ticker Name"])
         if not key:

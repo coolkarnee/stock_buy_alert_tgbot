@@ -261,13 +261,19 @@ The breakout reference is the lower of yesterday's high and close, with the 0.50
 
 An independent EP alert requires all five conditions below:
 
-- The day's open is strictly more than 5% above yesterday's close.
+- The day's open is strictly more than `EP_MIN_GAP_PCT` above yesterday's close (default **4.5%**, configured in `config/settings.py`).
 - Current price is above the developing EMA21.
 - Price is strictly above ₹20.
 - ATR is above 3.9%, except for IPOs.
 - Turnover/liquidity is above ₹20 Cr.
 
 EP alerts do not require Momentum BUY volume confirmation, momentum, breakout, rally-strength, near-high, or opening-range conditions.
+
+EP evaluation waits for the actual opening one-minute candle to complete and become available from Upstox's intraday candle API. Completion is determined by the candle timestamp plus its one-minute duration, not a hardcoded 09:16 check. Normally the 09:15 candle becomes eligible around 09:16 IST; provider latency or request queues can delay delivery. Starting the workflow before the open does not skip this check.
+
+The monitor uses the first candle's open for the gap and aggregates today's completed one-minute candles for EP price (latest completed close), high, low, and cumulative volume. This keeps EP independent of missing daily OHLC or volume fields in WebSocket ticks. Gap candidates are fetched even if they fail Momentum filters; when the WebSocket open is missing, a candle request is still allowed. Requests share the existing background candle pool and are retried at most once per minute until EP qualifies. A missing/invalid opening candle cannot trigger EP, and a later candle's open is never substituted. The EMA21, ATR, liquidity, and once-per-day EP rules remain in place; Momentum BUY continues using live quotes and its existing ORB rules.
+
+Yesterday's close and indicator baselines still exclude today's unfinished daily candle to avoid double-counting it. Today's candle is included separately through the intraday EP data.
 
 Stocks with fewer than 252 completed daily candles are treated as IPOs: rally and ATR checks auto-pass, and proximity must be within 15% of the listing high. This uses available history as a listing-age proxy; incomplete provider history may therefore misclassify a stock. A first-day listing without a previous daily candle cannot be evaluated against yesterday's close.
 
@@ -279,7 +285,7 @@ RVOL projects cumulative volume to a 375-minute session using elapsed session ti
 
 `scanner/live_data.py` contains a Yahoo Finance INR market-cap helper for future use, but the current live monitor does not invoke it, so there is no market-cap lookup, retry, or market-cap rejection in the active signal path. Missing/incomplete opening candles cannot establish an ORB; these requests are retried at most once per minute per stock until all five ranges are available. The first eligible alert can be delayed by provider latency, queues, or rate limits. Starting after the open still reconstructs the full opening ranges from candles, rather than approximating them from observed ticks.
 
-Run the offline regression suite with `python -m unittest test_live_engine -v`. It does not contact Telegram or Upstox. All 28 tests pass; fixtures reflect current rules (close-mode ORB needs `orb_close_breaks`, 50-day turnover > 20 Cr, RVOL from `rvol_prev19_volume`, swing-move strength, and the end-to-end monitor test mocks `load_instruments` and `send_breadth_alerts`). The monitor test writes `live_alerts.csv` in the working directory (hidden via `.git/info/exclude`; see the quick reference). Real-time delivery additionally requires valid Upstox and Telegram credentials and a running monitor each trading day.
+Run the offline regression suite with `python -m unittest test_live_engine -v`. It does not contact Telegram or Upstox. Fixtures cover close-mode ORB, 50-day turnover > 20 Cr, RVOL from `rvol_prev19_volume`, swing-move strength, and the configurable EP gap and completed-opening-candle gate. The EP monitor regression covers a pre-open start, incomplete WebSocket OHLC/volume, and once-per-day delivery from completed candle data. These updated tests have not been executed as part of this change. The Momentum monitor test writes `live_alerts.csv` in the working directory (hidden via `.git/info/exclude`; see the quick reference); the EP monitor test uses a temporary directory. Real-time delivery additionally requires valid Upstox and Telegram credentials and a running monitor each trading day.
 
 To diagnose Upstox index symbols and EMA history, run `UPSTOX_ACCESS_TOKEN=... python test_upstox_indices.py`. It lists every available `NSE_INDEX` instrument, checks the six market-summary indexes, and prints EMA10/EMA21 values. Add `--all-indexes` to calculate EMAs for every available Upstox NSE index.
 

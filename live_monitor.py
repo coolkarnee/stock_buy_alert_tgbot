@@ -410,7 +410,7 @@ def run():
                     candles = future.result()
                     update_intraday(state, candles)
                 except Exception as exc:
-                    print(f"[{state['symbol']}] opening candle refresh failed; BUY blocked until ORB known: {exc}")
+                    print(f"[{state['symbol']}] intraday candle refresh failed; EP needs completed candles, BUY needs ORB: {exc}")
             with quote_lock:
                 quotes = dict(latest_quotes)
                 current_index_quotes = dict(index_quotes)
@@ -459,6 +459,7 @@ def run():
                     print(f"Market breadth alerts failed: {exc}")
                 open_summary_sent = True
             evaluated = []
+            ep_evaluated = []
             for instrument_key, quote in quotes.items():
                 state = states[instrument_key]
                 alert_key = (datetime.now(IST).date(), state["symbol"])
@@ -466,15 +467,44 @@ def run():
                     state["market_above_ema"] = market_context["above_ema"]
                 state["market_regime"] = market_context["regime"]
                 state["market_benchmark"] = benchmark_name
+                ep_quote = state["ep_quote"]
+                ep_result = None
+                if ep_quote is not None and alert_key not in sent_ep:
+                    ep_result = evaluate(state, ep_quote)
+                    if ep_result:
+                        ep_evaluated.append((instrument_key, alert_key, ep_result))
                 result = evaluate(state, quote)
-                if not result:
-                    continue
-                evaluated.append((instrument_key, alert_key, result))
+                if result:
+                    evaluated.append((instrument_key, alert_key, result))
+
+                gap_reference = state["prev_close"] * (1 + settings.EP_MIN_GAP_PCT / 100)
+                day_open = float((quote.get("ohlc") or {}).get("open") or 0)
+                ep_gap_candidate = (
+                    ep_quote["ohlc"]["open"] > gap_reference
+                    if ep_quote is not None else
+                    day_open <= 0 or max(day_open, quote.get("last_price") or 0) > gap_reference
+                )
+                needs_ep_data = (
+                    alert_key not in sent_ep and ep_gap_candidate
+                    and datetime.now(IST) >= start + timedelta(minutes=1)
+                    and not (ep_result and ep_result["episodic_pivot"])
+                )
+                needs_orb_data = (
+                    result is not None and not result["buy"]
+                    and all(passed for name, passed in result["checks"].items()
+                            if name not in {"orb", "volume_surge"})
+                    and (len(state["orb_highs"]) < 5
+                         or (result["orb_mode"] == "close" and not result["orb_windows"]))
+                )
+                if ((needs_ep_data or needs_orb_data) and instrument_key not in pending
+                        and time.monotonic() >= next_refresh.get(instrument_key, 0)):
+                    pending[instrument_key] = pool.submit(fetch_signal_data, instrument_key)
+                    next_refresh[instrument_key] = time.monotonic() + 60
 
             # Keep the delivery order explicit: market context/breadth has
             # already been sent above, then EP, then Momentum BUY. This does
             # not alter either signal's checks or once-per-day suppression.
-            for instrument_key, alert_key, result in evaluated:
+            for instrument_key, alert_key, result in ep_evaluated:
                 if result["episodic_pivot"] and alert_key not in sent_ep:
                     sent_ep.add(alert_key)
                     with alert_log.open("a", newline="", encoding="utf-8") as f:
@@ -504,24 +534,10 @@ def run():
                         ])
                     send(fmt_alert("BUY", result), chart_symbol=result["symbol"])
 
-            for instrument_key, _, result in evaluated:
-                state = states[instrument_key]
-                if result["buy"]:
-                    continue
-                eligible = all(passed for name, passed in result["checks"].items()
-                               if name not in {"orb", "volume_surge"})
-                needs_data = (
-                    len(state["orb_highs"]) < 5 or
-                    (result["orb_mode"] == "close" and not result["orb_windows"])
-                )
-                if (eligible and needs_data and instrument_key not in pending and
-                        time.monotonic() >= next_refresh.get(instrument_key, 0)):
-                    pending[instrument_key] = pool.submit(fetch_signal_data, instrument_key)
-                    next_refresh[instrument_key] = time.monotonic() + 60
             now = time.time()
             if now - last_log >= 60:
                 last_log = now
-                print(f"Heartbeat {datetime.now(IST).strftime('%H:%M:%S')} | buy alerts={len(sent_buy)} | pending ORB={len(pending)}")
+                print(f"Heartbeat {datetime.now(IST).strftime('%H:%M:%S')} | buy alerts={len(sent_buy)} | EP alerts={len(sent_ep)} | pending candles={len(pending)}")
             time.sleep(1)
     finally:
         pool.shutdown(wait=True, cancel_futures=True)

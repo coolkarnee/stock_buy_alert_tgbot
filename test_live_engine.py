@@ -1,6 +1,9 @@
+import csv
 import unittest
 from concurrent.futures import Future
 from datetime import datetime, timedelta
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 import pandas as pd
@@ -28,6 +31,12 @@ class MomentumTests(unittest.TestCase):
             "last_price": 110.0, "volume": 4000000.0,
             "ohlc": {"open": 100.0, "high": 110.0, "low": 100.0},
         }
+        self.ep_start = datetime.now(live_engine.IST).replace(hour=9, minute=15, second=0, microsecond=0)
+        self.ep_candles = pd.DataFrame({
+            "timestamp": [self.ep_start],
+            "open": [104.6], "high": [110.0], "low": [104.6],
+            "close": [110.0], "volume": [3000000.0],
+        })
         self.clock = patch.object(live_engine, "_market_minutes", return_value=(30, None, None))
         self.clock.start()
         self.addCleanup(self.clock.stop)
@@ -208,17 +217,61 @@ class MomentumTests(unittest.TestCase):
             with patch.object(live_engine, "_market_minutes", return_value=(minutes, None, None)):
                 self.assertIsNone(live_engine.evaluate(self.state, self.quote))
 
-    def test_ep_can_evaluate_before_three_minutes_without_orb(self):
-        self.quote.update({
-            "last_price": 110.0,
-            "volume": 300000000.0,
-            "ohlc": {"open": 106.0, "high": 110.0, "low": 106.0},
-        })
-        with patch.object(live_engine, "_market_minutes", return_value=(2, None, None)):
-            result = live_engine.evaluate(self.state, self.quote)
+    def test_ep_can_evaluate_after_first_completed_minute_without_orb(self):
+        self.state["orb_highs"] = {}
+        live_engine.update_intraday(self.state, self.ep_candles, self.ep_start + timedelta(minutes=1))
+        with patch.object(live_engine, "_market_minutes", return_value=(1, None, None)):
+            result = live_engine.evaluate(self.state, self.state["ep_quote"])
         self.assertTrue(result["episodic_pivot"])
         self.assertFalse(result["buy"])
         self.assertFalse(result["checks"]["orb"])
+
+    def test_ep_waits_for_actual_completed_opening_candle(self):
+        self.quote["ohlc"]["open"] = 106.0
+        self.assertFalse(live_engine.evaluate(self.state, self.quote)["episodic_pivot"])
+        live_engine.update_intraday(self.state, self.ep_candles, self.ep_start + timedelta(seconds=59))
+        self.assertIsNone(self.state["ep_quote"])
+        self.assertFalse(live_engine.evaluate(self.state, self.quote)["episodic_pivot"])
+        live_engine.update_intraday(self.state, self.ep_candles, self.ep_start + timedelta(minutes=1))
+        self.assertTrue(live_engine.evaluate(self.state, self.state["ep_quote"])["episodic_pivot"])
+
+    def test_ep_gap_threshold_is_configurable_and_strict(self):
+        for threshold, opening, expected in (
+            (4.5, 104.49, False), (4.5, 104.50, False), (4.5, 104.51, True),
+            (6.0, 104.60, False), (6.0, 106.10, True),
+        ):
+            with self.subTest(threshold=threshold, opening=opening):
+                candles = self.ep_candles.assign(open=opening, low=opening)
+                live_engine.update_intraday(self.state, candles, self.ep_start + timedelta(minutes=1))
+                with patch.object(settings, "EP_MIN_GAP_PCT", threshold):
+                    result = live_engine.evaluate(self.state, self.state["ep_quote"])
+                self.assertEqual(result["episodic_pivot"], expected)
+
+    def test_ep_rejects_previous_day_missing_or_invalid_opening_candle(self):
+        for candles in (
+            self.ep_candles.assign(timestamp=self.ep_start - timedelta(days=1)),
+            self.ep_candles.assign(timestamp=self.ep_start + timedelta(minutes=1)),
+            self.ep_candles.assign(low=0),
+            self.ep_candles.assign(close=float("nan")),
+            self.ep_candles.assign(volume=0),
+        ):
+            with self.subTest(candles=candles.to_dict()):
+                self.state["ep_quote"] = None
+                live_engine.update_intraday(self.state, candles, self.ep_start + timedelta(minutes=2))
+                self.assertIsNone(self.state["ep_quote"])
+
+    def test_ep_keeps_existing_trend_atr_price_and_liquidity_filters(self):
+        live_engine.update_intraday(self.state, self.ep_candles, self.ep_start + timedelta(minutes=1))
+        self.assertTrue(live_engine.evaluate(self.state, self.state["ep_quote"])["episodic_pivot"])
+        below_ema = dict(self.state, ema21=200.0)
+        self.assertFalse(live_engine.evaluate(below_ema, below_ema["ep_quote"])["episodic_pivot"])
+        for setting, threshold in (
+            ("MIN_ATR_PCT", 100.0),
+            ("MIN_PRICE", 110.0),
+            ("MIN_TURNOVER_CR", 100.0),
+        ):
+            with self.subTest(setting=setting), patch.object(settings, setting, threshold):
+                self.assertFalse(live_engine.evaluate(self.state, self.state["ep_quote"])["episodic_pivot"])
 
     def test_invalid_daily_ohlc_blocked(self):
         self.quote["ohlc"]["low"] = 0
@@ -363,6 +416,69 @@ class MomentumTests(unittest.TestCase):
             breadth.assert_called_once()
             intraday.assert_called_once_with("NSE_EQ|TEST")
             streamer.return_value.disconnect.assert_called_once()
+
+    def test_monitor_ep_uses_completed_candle_with_incomplete_websocket_quote(self):
+        start = self.ep_start
+        universe = pd.DataFrame([{"instrument_key": "NSE_EQ|TEST", "trading_symbol": "TEST"}])
+        feed = {"feeds": {"NSE_EQ|TEST": {"fullFeed": {"marketFullFeed": {
+            "ltpc": {"ltp": 110},
+        }}}}}
+
+        class Clock(datetime):
+            current = start - timedelta(minutes=5)
+
+            @classmethod
+            def now(cls, timezone=None):
+                return cls.current
+
+        class ImmediateExecutor:
+            def __init__(self, **kwargs):
+                pass
+
+            def submit(self, function, *args):
+                future = Future()
+                future.set_result(function(*args))
+                return future
+
+            def shutdown(self, **kwargs):
+                pass
+
+        def advance(seconds):
+            Clock.current += timedelta(seconds=seconds)
+            if Clock.current >= start + timedelta(minutes=1, seconds=3):
+                Clock.current = start.replace(hour=15, minute=20)
+
+        delivered = []
+        with TemporaryDirectory() as directory:
+            alert_log = Path(directory) / "live_alerts.csv"
+            with (patch.object(live_monitor, "datetime", Clock),
+                  patch.object(live_engine, "datetime", Clock),
+                  patch.object(live_monitor.time, "sleep", side_effect=advance),
+                  patch.object(live_monitor, "Path", return_value=alert_log),
+                  patch.object(live_monitor, "ThreadPoolExecutor", ImmediateExecutor),
+                  patch.object(live_monitor, "load_nse_equities", return_value=universe),
+                  patch.object(live_monitor, "load_instruments", return_value=[]),
+                  patch.object(live_monitor, "historical_many",
+                               return_value={"NSE_EQ|TEST": ("TEST", self.history, None)}),
+                  patch.object(live_monitor, "intraday_minutes", return_value=self.ep_candles) as intraday,
+                  patch.object(live_monitor.upstox_client, "MarketDataStreamerV3") as streamer,
+                  patch.object(live_monitor, "send",
+                               side_effect=lambda message, **kwargs: delivered.append((Clock.current, message)))):
+                callbacks = {}
+                streamer.return_value.on.side_effect = lambda event, callback: callbacks.update({event: callback})
+                streamer.return_value.connect.side_effect = lambda: callbacks["message"](feed)
+                live_monitor.run()
+                intraday.assert_called_once_with("NSE_EQ|TEST")
+                streamer.return_value.disconnect.assert_called_once()
+            ep_alerts = [(when, message) for when, message in delivered if "EPISODIC PIVOT BUY - TEST" in message]
+            self.assertEqual(len(ep_alerts), 1, delivered)
+            self.assertGreaterEqual(ep_alerts[0][0], start + timedelta(minutes=1))
+            self.assertLess(ep_alerts[0][0], start + timedelta(minutes=2))
+            self.assertIn("Gap +4.60%", ep_alerts[0][1])
+            self.assertFalse(any("MOMENTUM BUY" in message for _, message in delivered))
+            with alert_log.open(newline="", encoding="utf-8") as handle:
+                rows = list(csv.DictReader(handle))
+            self.assertEqual([row["alert_type"] for row in rows], ["EP"])
 
 
 if __name__ == "__main__":

@@ -89,6 +89,7 @@ def build_state(symbol, df, nifty_df):
         "orb_highs": {},
         "orb_close_breaks": {},
         "first30_volume": None,
+        "ep_quote": None,
         # RVOL baseline inputs matching the PineScript calculation.
         "rvol_traded_days": len(history),
         "rvol_cum_volume": float(history.volume.sum()),
@@ -111,6 +112,27 @@ def update_intraday(state, candles, now=None):
     bars["timestamp"] = pd.to_datetime(bars["timestamp"], utc=True).dt.tz_convert(IST)
     bars = bars[(bars.timestamp >= start) & (bars.timestamp + pd.Timedelta(minutes=1) <= now)]
     bars = bars.drop_duplicates("timestamp").sort_values("timestamp")
+    ep_columns = ["open", "high", "low", "close", "volume"]
+    if not bars.empty and set(ep_columns).issubset(bars.columns):
+        values = bars[ep_columns]
+        valid = (
+            values.notna().all().all()
+            and values.abs().lt(float("inf")).all().all()
+            and values[["open", "high", "low", "close"]].gt(0).all().all()
+            and values.volume.ge(0).all()
+        )
+        # Require the actual opening minute, never a later candle's open.
+        if valid and bars.timestamp.iloc[0] == start and values.volume.sum() > 0:
+            state["ep_quote"] = {
+                "last_price": float(bars.close.iloc[-1]),
+                "volume": float(bars.volume.sum()),
+                "ohlc": {
+                    "open": float(bars.open.iloc[0]),
+                    "high": float(bars.high.max()),
+                    "low": float(bars.low.min()),
+                },
+                "timestamp": bars.timestamp.iloc[-1].isoformat(),
+            }
     for window in ORB_WINDOWS:
         # Build each ORB from the opening time range itself. A missing or
         # delayed 1-minute candle must not invalidate the entire ORB.
@@ -150,9 +172,8 @@ def _market_minutes():
 
 def evaluate(state, quote):
     minutes, _, _ = _market_minutes()
-    # EP is independent of opening-range data and may be delivered from the
-    # opening tick. Momentum BUY still remains blocked until an ORB can qualify
-    # it through the existing `checks["orb"]` condition below.
+    # Momentum still requires an ORB; EP separately requires completed
+    # current-session candle data populated by update_intraday().
     if minutes >= 375:
         return None
     price = float(quote.get("last_price") or 0)
@@ -273,7 +294,9 @@ def evaluate(state, quote):
         "sl_risk": sl_risk_valid,
     }
     episodic_pivot = (
-        day_open > state["prev_close"] * 1.05 and
+        state.get("ep_quote") is not None and
+        pd.Timestamp(state["ep_quote"]["timestamp"]).date() == datetime.now(IST).date() and
+        day_open > state["prev_close"] * (1 + settings.EP_MIN_GAP_PCT / 100) and
         price > current_ema21 and
         price > settings.MIN_PRICE and
         (state["is_ipo"] or atr_pct > settings.MIN_ATR_PCT) and

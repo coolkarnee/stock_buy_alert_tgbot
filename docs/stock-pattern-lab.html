@@ -44,7 +44,7 @@
   <div class="grid">
     <section class="card"><h3>Momentum BUY</h3><p>Every live strength, breakout, liquidity, opening-range, swing-period, and SL-risk condition must pass.</p></section>
     <section class="card"><h3>Episodic Pivot BUY</h3><p>An independent alert for an opening gap above 4.5%, price above developing EMA21, price above ₹20, ATR qualification, and liquidity. It waits for the first opening minute to finish.</p></section>
-    <section class="card"><h3>EP radar opening-range BUY</h3><p>For any stock opening more than 4.5% higher: opening-range confirmation on 3, 5, 15, or 60 minutes using the same close/spot choice as Momentum, while also staying above EMA21, above Rs 20, and above Rs 20 Cr turnover.</p></section>
+    <section class="card"><h3>EP radar opening-range BUY</h3><p>For any stock opening more than 4.5% higher: opening-range confirmation on 3, 5, 15, 30, or 60 minutes using the same close/spot choice as Momentum, while also staying above EMA21, above Rs 20, and above Rs 20 Cr turnover.</p></section>
     <section class="card"><h3>Swing performance</h3><p>Every alert uses the previous trading day's low as the initial SL. A +10% move in Bear/Choppy context or +15% in Bull context books part of the position; the remainder trails on daily 10 EMA/breakeven, then 20 EMA. Rows are marked as Trade open, Partial exit, or Full exit through the report date.</p></section>
   </div>
 
@@ -58,7 +58,7 @@
   <p>Gap-up stocks can be volatile: they may continue higher, move sideways, or quickly give back the gap. The alert is therefore a prompt for further research and risk planning, not confirmation of a guaranteed return.</p>
   <p class="note">The message can arrive only during the live monitoring session after the market opens. Every required condition for that category must be satisfied at the same time. At most one Momentum BUY and one Episodic Pivot BUY is sent for the same stock during a run. No automatic order is placed.</p>
   <p>Telegram delivery requires the Telegram settings. Without them, the alert appears in the workflow log.</p>
-  <p class="note">EP BUY never suppresses Momentum BUY: the same stock can receive both when their own conditions pass. The separate EP radar scan can add one breakout message per range, up to four per stock per session.</p>
+  <p class="note">EP BUY never suppresses Momentum BUY: the same stock can receive both when their own conditions pass. The separate EP radar scan can add one breakout message per range, up to five per stock per session.</p>
 
   <h2>Momentum BUY conditions</h2>
   <p>All mandatory conditions must pass at the same time:</p>
@@ -111,9 +111,11 @@
   <p>EP uses today's completed candles while keeping the previous trading day's close as the gap reference. Starting monitoring before the market opens does not skip the signal. If other conditions only qualify later, the alert may arrive later in the session.</p>
 
   <h2>EP radar: a simpler gap-and-breakout watch</h2>
-  <p>Every stock with a verified opening gap strictly above 4.5% enters this radar, even if the full EP BUY conditions fail. Its opening 3-minute, 5-minute, 15-minute and 1-hour highs become four separate reference levels.</p>
+  <p>Every stock with a verified opening gap strictly above 4.5% enters this radar, even if the full EP BUY conditions fail. Its opening 3-minute, 5-minute, 15-minute, 30-minute and 1-hour highs become five separate reference levels.</p>
   <p>The radar uses the same ORB confirmation choice as Momentum: <strong>close</strong> waits for a completed candle close strictly above the range high; <strong>spot</strong> uses the live price strictly above the high after the range forms. A touch or equal price is not enough. The qualifying price must also be above EMA21, above Rs 20, and satisfy turnover above Rs 20 Cr. Other Momentum filters are not required for this scan. Missing opening candles must become available before a range can qualify.</p>
-  <p>The current default is close confirmation using completed one-minute candles, not a requirement to wait for another full 1-hour candle. Spot confirmation does not wait for a breakout candle to close. Each of the four ranges still alerts once per stock per session. Full EP and Momentum BUY alerts stay independent.</p>
+  <p>The current default is close confirmation using completed one-minute candles, not a requirement to wait for another full 1-hour candle. Spot confirmation does not wait for a breakout candle to close. Each of the five ranges alerts once per stock per session. Full EP and Momentum BUY alerts stay independent.</p>
+  <p>The 30-minute range forms from 09:15 through 09:44 IST. Its earliest spot confirmation is after 09:45; its earliest close confirmation is around 09:46, subject to data availability and the other radar conditions.</p>
+  <p><a href="telegram-trader-rules.txt">Download the copy-paste Telegram trader rules sheet</a>.</p>
   <pre>EP RADAR ORB BUY - EXAMPLE | 3m
 Sector: Refineries
 Breakout Close Rs 110.00 | Opening Gap +4.60%

@@ -285,10 +285,10 @@ Yesterday's close and indicator baselines still exclude today's unfinished daily
 This is a separate, lighter scan, not a replacement for EP BUY or Momentum BUY:
 
 - **Radar membership:** the actual opening minute's open is strictly more than `EP_MIN_GAP_PCT` (default 4.5%) above the previous completed session's close. A full EP BUY is **not** required. The opening gap defines membership even if the stock fails EMA, ATR, liquidity, price-floor, or Momentum checks.
-- **Ranges:** first **3, 5, 15, and 60 minutes** from market open. There is no 30-minute radar category. All one-minute price candles within a range must be available and valid before its high is trusted.
+- **Ranges:** first **3, 5, 15, 30, and 60 minutes** from market open. All one-minute price candles within a range must be available and valid before its high is trusted.
 - **ORB confirmation:** uses the same `OPENING_RANGE_BREAKOUT_MODE` in `config/settings.py` as Momentum. `"close"` (default) requires a completed candle close strictly above the opening-range high; `"spot"` requires the current live price strictly above that high once the range has formed. This is the existing close/spot choice, not a new yes/no setting. Touching or equalling the high does not qualify.
 - **Minimal quality filters:** qualifying price must be above the developing EMA21, strictly above ₹20, and pass the same turnover/liquidity threshold (>₹20 Cr). Close mode uses the confirming candle's close and cumulative volume through that candle; spot mode uses live price and cumulative volume (completed-candle volume is the baseline if the tick omits it). It still does not require Momentum volume surge, breakout-reference, near-high, strength, ATR, or SL-distance checks.
-- **Frequency:** once per stock per range per day within the process, up to four radar messages. Normal EP and Momentum messages remain independently eligible. The monitor continues its shared, at-most-once-per-minute candle refresh for radar stocks after an EP or Momentum alert until all four radar categories have alerted or monitoring ends.
+- **Frequency:** once per stock per range per day within the process, up to five radar messages. Normal EP and Momentum messages remain independently eligible. The monitor continues its shared, at-most-once-per-minute candle refresh for radar stocks after an EP or Momentum alert until all five radar categories have alerted or monitoring ends.
 
 Close mode retains the existing completed one-minute confirmation: for the 3-minute range (09:15–09:17), the earliest confirming candle completes at 09:19; for the 60-minute range it completes at 10:16. Spot mode can qualify after the respective range finishes (09:18 and 10:15), without waiting for a breakout candle to close. These follow range/candle durations, not an exact-time trigger; data/API/Telegram latency may delay delivery. A later monitor start reconstructs opening ranges; close mode can reconstruct qualifying candle breakouts, while spot mode checks the current quote, not historic wicks.
 
@@ -303,7 +303,11 @@ Prev Day Low SL Rs 102.00
 EP gap radar + configured ORB confirmation. Requires price > EMA21, > Rs 20, and turnover > Rs 20 Cr.
 ```
 
-The log types remain `EP_ORB_3M`, `EP_ORB_5M`, `EP_ORB_15M`, and `EP_ORB_60M`. Alert price is the first qualifying completed candle's close in close mode or the first qualifying observed live price in spot mode; log time is when the monitor emits the alert. Messages show `ORB confirmation: close` with `Breakout Close` and candle-start time, or `ORB confirmation: spot` with `Spot Price` and quote time. Delayed/reconstructed alerts are not a claim that an order was executable at an earlier price.
+The log types are `EP_ORB_3M`, `EP_ORB_5M`, `EP_ORB_15M`, `EP_ORB_30M`, and `EP_ORB_60M`. Alert price is the first qualifying completed candle's close in close mode or the first qualifying observed live price in spot mode; log time is when the monitor emits the alert. Messages show `ORB confirmation: close` with `Breakout Close` and candle-start time, or `ORB confirmation: spot` with `Spot Price` and quote time. Delayed/reconstructed alerts are not a claim that an order was executable at an earlier price.
+
+The 30-minute range covers 09:15 through 09:44 IST. Spot mode can qualify once that range completes at 09:45; close mode can first qualify when the following one-minute candle completes at 09:46, subject to data availability and the unchanged quality filters.
+
+The copy-paste Telegram trader rules sheet is saved in [docs/telegram-trader-rules.txt](docs/telegram-trader-rules.txt).
 
 EP-radar regressions in `test_ep_radar.py` cover both configured modes, strict crossings, completed ranges, live-price dispatch without a breakout close, quality filters, per-range duplicate suppression, and unchanged first-entry performance selection.
 
@@ -327,7 +331,7 @@ The batch scan writes `scan_results.csv` in the current working directory when t
 
 The batch output is sorted with BUYs and candidates first, followed by VCP quality and score. The console prints scan health, counts, and up to 30 candidates. Only BUY results are sent as stock alerts; candidate-only results are not.
 
-The live monitor sends Momentum BUY and Episodic Pivot BUY messages at most once per category and symbol per trading day within that process, plus up to four independent EP gap-radar ORB messages per symbol. Restart the monitor each trading day; it exits at 15:20 IST. There is no database or file-backed state to suppress repeats across separate runs on the same day.
+The live monitor sends Momentum BUY and Episodic Pivot BUY messages at most once per category and symbol per trading day within that process, plus up to five independent EP gap-radar ORB messages per symbol. Restart the monitor each trading day; it exits at 15:20 IST. There is no database or file-backed state to suppress repeats across separate runs on the same day.
 
 Telegram delivery uses the Telegram Bot API `sendMessage` endpoint. A non-success response or request exception is printed and processing continues. Missing Telegram credentials cause the message to be printed locally.
 
@@ -341,7 +345,7 @@ The first lookup after an alert qualifies loads the Upstox instrument master and
 
 Missing ISINs, absent/invalid `data.sector`, API failures, and instrument-master failures are logged and displayed as **`NA`**, without blocking the alert. Missing sectors are grouped under `NA` in daily counts and shown as `NA` in swing reports. The supplied Upstox sector label is used as returned; this does not guarantee profile coverage for every stock. There is no secondary provider, new credential, or workflow change.
 
-The live alert CSV appends a `sector` column so downstream reports preserve the classification recorded at entry. The end-of-day report displays sector beside each stock and, after stock performances, lists total alerts, Momentum BUY count, EP count, distinct stock count, and EP radar ORB count per sector. Counts include all today's logged signal events, even when price/performance data is missing. A stock can contribute an EP, a Momentum BUY, and up to four radar ORB events, but remains one distinct stock within its sector; these are not counts of winning trades.
+The live alert CSV appends a `sector` column so downstream reports preserve the classification recorded at entry. The end-of-day report displays sector beside each stock and, after stock performances, lists total alerts, Momentum BUY count, EP count, distinct stock count, and EP radar ORB count per sector. Counts include all today's logged signal events, even when price/performance data is missing. A stock can contribute an EP, a Momentum BUY, and up to five radar ORB events, but remains one distinct stock within its sector; these are not counts of winning trades.
 
 ### First-alert performance entry
 
@@ -353,7 +357,7 @@ The shared selector `scanner/alert_history.py` sorts by timestamp, not file orde
 
 Offline regressions in `test_sector.py` cover ISIN resolution, the exact company-profile URL, `data.sector` parsing, caching, missing/invalid fields, request failures, legacy CSV compatibility, daily counts, and Excel sector export. `test_alerts.py` covers message splitting; live-monitor tests mock the sector lookup so they remain offline. Run all three suites with the virtual-environment command in the quick reference. These tests use mocked Upstox/Telegram calls, not live credentials.
 
-Validated on 2026-10-17 in `.venv`: `$env:PYTHONIOENCODING='utf-8'; .\.venv\Scripts\python.exe -W ignore::DeprecationWarning -m unittest test_ep_radar test_live_engine test_sector test_alerts -q` — **76 tests passed**. The radar tests cover both close/spot modes, all four ranges, EMA21/price/turnover gates, strict/equal/wick/unfinished/missing-candle cases, independent EP + Momentum dispatch, per-range suppression, chronological first-entry selection, and daily/swing integration. Deprecation warnings from existing pandas/NumPy date arithmetic are suppressed in this command. Live API availability and actual Telegram delivery are not exercised by these offline tests.
+Validated on 2026-10-17 in `.venv`: `$env:PYTHONIOENCODING='utf-8'; .\.venv\Scripts\python.exe -W ignore::DeprecationWarning -m unittest test_ep_radar test_live_engine test_sector test_alerts -q` — **77 tests passed**. The radar tests cover both close/spot modes, all five ranges including 30-minute completion boundaries, EMA21/price/turnover gates, strict/equal/wick/unfinished/missing-candle cases, independent EP + Momentum dispatch, per-range suppression, chronological first-entry selection, and daily/swing integration. Deprecation warnings from existing pandas/NumPy date arithmetic are suppressed in this command. Live API availability and actual Telegram delivery are not exercised by these offline tests.
 
 Telegram delivery (`_post()` in `scanner/alerts.py`) paces messages per chat (1.1 s for private chats, 3.1 s for group chats whose ID starts with `-`), honours HTTP 429 `retry_after` (capped at 60 s), and retries network/5xx errors up to 3 attempts. The Bot API has no daily message cap; the limits are about 1 msg/s per chat, 20 msgs/min per group, and about 30 msgs/s per bot.
 

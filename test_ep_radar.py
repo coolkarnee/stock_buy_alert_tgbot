@@ -39,9 +39,9 @@ class EpRadarTests(unittest.TestCase):
             "volume": volume,
         })
 
-    def test_all_four_ranges_trigger_on_completed_close_when_radar_filters_pass(self):
+    def test_all_five_ranges_trigger_on_completed_close_when_radar_filters_pass(self):
         live_engine.update_intraday(self.state, self.candles(), self.start + timedelta(minutes=61))
-        self.assertEqual(set(self.state["ep_orb_breakouts"]), {3, 5, 15, 60})
+        self.assertEqual(set(self.state["ep_orb_breakouts"]), {3, 5, 15, 30, 60})
         self.assertIsNone(self.state["ep_quote"])
         for breakout in self.state["ep_orb_breakouts"].values():
             self.assertEqual(breakout["price"], 110)
@@ -78,19 +78,19 @@ class EpRadarTests(unittest.TestCase):
             bars.loc[61, "volume"] = 2_000_000.0
             with patch.object(settings, "MIN_TURNOVER_CR", 24.8):
                 live_engine.update_intraday(state, bars, self.start + timedelta(minutes=62))
-            self.assertEqual(set(state["ep_orb_breakouts"]), {3, 5, 15, 60})
+            self.assertEqual(set(state["ep_orb_breakouts"]), {3, 5, 15, 30, 60})
             self.assertEqual(state["ep_orb_breakouts"][3]["price"], 111.0)
             self.assertEqual(
                 state["ep_orb_breakouts"][3]["candle_time"],
                 (self.start + timedelta(minutes=61)).isoformat(),
             )
 
-    def test_not_before_breakout_minute_completes_and_no_30m_category(self):
+    def test_not_before_breakout_minute_completes_and_no_duplicate_breakouts(self):
         bars = self.candles()
         live_engine.update_intraday(self.state, bars, self.start + timedelta(minutes=60, seconds=59))
         self.assertEqual(self.state["ep_orb_breakouts"], {})
         live_engine.update_intraday(self.state, bars, self.start + timedelta(minutes=61))
-        self.assertNotIn(30, self.state["ep_orb_breakouts"])
+        self.assertIn(30, self.state["ep_orb_breakouts"])
         first = dict(self.state["ep_orb_breakouts"])
         live_engine.update_intraday(self.state, bars, self.start + timedelta(minutes=62))
         self.assertEqual(self.state["ep_orb_breakouts"], first)
@@ -138,7 +138,7 @@ class EpRadarTests(unittest.TestCase):
                 live_engine.update_ep_radar_spot(self.state, {"last_price": price}, now)
                 self.assertEqual(self.state["ep_orb_breakouts"], {})
             live_engine.update_ep_radar_spot(self.state, {"last_price": 110.0}, now)
-            self.assertEqual(set(self.state["ep_orb_breakouts"]), {3, 5, 15, 60})
+            self.assertEqual(set(self.state["ep_orb_breakouts"]), {3, 5, 15, 30, 60})
             first = dict(self.state["ep_orb_breakouts"])
             live_engine.update_ep_radar_spot(self.state, {"last_price": 112.0}, now)
             self.assertEqual(self.state["ep_orb_breakouts"], first)
@@ -207,7 +207,29 @@ class EpRadarTests(unittest.TestCase):
                 if gate == "turnover":
                     quote["volume"] = 200_000_000.0
                     live_engine.update_ep_radar_spot(state, quote, now)
-                    self.assertEqual(set(state["ep_orb_breakouts"]), {3, 5, 15, 60})
+                    self.assertEqual(set(state["ep_orb_breakouts"]), {3, 5, 15, 30, 60})
+
+    def test_30m_range_respects_completion_and_confirmation_mode(self):
+        for mode in ("close", "spot"):
+            with self.subTest(mode=mode), patch.object(settings, "OPENING_RANGE_BREAKOUT_MODE", mode):
+                state = live_engine.build_state("TEST", self.history, None)
+                bars = self.candles()
+                bars.loc[30, ["high", "close"]] = [111.0, 110.0]
+                before = self.start + timedelta(minutes=29, seconds=59)
+                live_engine.update_intraday(state, bars, before)
+                live_engine.update_ep_radar_spot(state, {"last_price": 110.0}, before)
+                self.assertNotIn(30, state["ep_orb_breakouts"])
+                formed = self.start + timedelta(minutes=30)
+                live_engine.update_intraday(state, bars, formed)
+                live_engine.update_ep_radar_spot(state, {"last_price": 110.0}, formed)
+                if mode == "close":
+                    self.assertNotIn(30, state["ep_orb_breakouts"])
+                    live_engine.update_intraday(state, bars, formed + timedelta(minutes=1))
+                breakout = state["ep_orb_breakouts"][30]
+                self.assertEqual(breakout["price"], 110.0)
+                self.assertEqual(breakout["range_high"], 105.0)
+                self.assertEqual(breakout["orb_mode"], mode)
+                self.assertIn("| 30m", live_monitor.fmt_ep_orb_alert(state, 30, breakout))
 
     def run_monitor(self, gap_only, orb_mode="close", wick_only=False):
         bars = self.candles(volume=0 if gap_only else 100000)
@@ -279,9 +301,9 @@ class EpRadarTests(unittest.TestCase):
     def test_monitor_spot_mode_delivers_each_range_once_without_breakout_close(self):
         rows, messages = self.run_monitor(gap_only=True, orb_mode="spot", wick_only=True)
         self.assertEqual([row["alert_type"] for row in rows],
-                         ["EP_ORB_3M", "EP_ORB_5M", "EP_ORB_15M", "EP_ORB_60M"])
+                         ["EP_ORB_3M", "EP_ORB_5M", "EP_ORB_15M", "EP_ORB_30M", "EP_ORB_60M"])
         radar = [text for text in messages if "EP RADAR ORB BUY" in text]
-        self.assertEqual(len(radar), 4)
+        self.assertEqual(len(radar), 5)
         self.assertTrue(all("ORB confirmation: spot" in text for text in radar))
         self.assertTrue(all("Spot Price Rs 110.00" in text for text in radar))
         self.assertTrue(all(row["alert_price"] == "110.00" for row in rows))
@@ -289,8 +311,8 @@ class EpRadarTests(unittest.TestCase):
     def test_gap_only_monitor_delivers_each_timeframe_once_despite_failing_ep_and_momentum(self):
         rows, messages = self.run_monitor(gap_only=True)
         self.assertEqual([row["alert_type"] for row in rows],
-                         ["EP_ORB_3M", "EP_ORB_5M", "EP_ORB_15M", "EP_ORB_60M"])
-        self.assertEqual(sum("EP RADAR ORB BUY" in text for text in messages), 4)
+                         ["EP_ORB_3M", "EP_ORB_5M", "EP_ORB_15M", "EP_ORB_30M", "EP_ORB_60M"])
+        self.assertEqual(sum("EP RADAR ORB BUY" in text for text in messages), 5)
         self.assertTrue(all(row["alert_price"] == "110.00" for row in rows))
         self.assertTrue(all(row["sector"] == "Refineries" for row in rows))
 
@@ -299,7 +321,7 @@ class EpRadarTests(unittest.TestCase):
         types = [row["alert_type"] for row in rows]
         self.assertEqual(types.count("EP"), 1)
         self.assertEqual(types.count("BUY"), 1)
-        self.assertEqual(sum(kind.startswith("EP_ORB_") for kind in types), 4)
+        self.assertEqual(sum(kind.startswith("EP_ORB_") for kind in types), 5)
         self.assertTrue(any("MOMENTUM BUY - TEST" in text for text in messages))
         self.assertTrue(any("EPISODIC PIVOT BUY - TEST" in text for text in messages))
         selected = first_daily_alerts(rows)

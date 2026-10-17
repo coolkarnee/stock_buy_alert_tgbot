@@ -47,7 +47,7 @@ COLUMN_DESCRIPTIONS = [
     "Alert/buy price used for return calculation.",
     "Previous trading day's low; initial protective stop.",
     "Latest daily closing price as of Performance As Of Date.",
-    "First alert type: BUY, EP, or EP_ORB_3M/5M/15M/60M.",
+    "First alert type: BUY, EP, or EP_ORB_3M/5M/15M/30M/60M.",
     "Date on which the alert was generated.",
     "IST time at which the alert was generated.",
     "Date of the latest exit or partial action.",

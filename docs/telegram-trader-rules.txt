@@ -1,0 +1,104 @@
+STOCK PATTERN LAB - BUY ALERT RULES
+
+1. MOMENTUM BUY
+
+A broad strength-and-breakout signal. All required checks
+must qualify together:
+
+- Price above developing EMA21, except through listing day 21.
+- Price above the previous trading day's close.
+- Price above the previous-session breakout reference,
+  including a 0.50% buffer.
+- Price strictly above Rs 20.
+- Turnover/liquidity strictly above Rs 20 Cr.
+- Within 20% of the 52-week high; within 15% for IPOs.
+- ATR above 3.9%, except IPOs.
+- Opening-range breakout confirmed on at least one of:
+  3m, 5m, 15m, 30m or 60m.
+- Previous-day-low stop distance must be positive and
+  no more than 8% below the alert price.
+
+At least one activity confirmation is required:
+- RVOL >1.30x; OR
+- Pocket pivot; OR
+- First-30-minute volume surge; OR
+- Price up at least 4% from today's open; OR
+- Today's cumulative volume >9 million shares.
+
+Non-IPO stocks also need at least one swing-strength move:
+1W >10%, 1M >19%, 3M >29%, 6M >49%,
+1Y >99%, 18M >149%, or 24M >199%.
+
+Maximum indicated position size is capped at 25%,
+using a 1% portfolio-risk calculation.
+
+
+2. EPISODIC PIVOT BUY - EP BUY
+
+An independent opening-gap signal:
+
+- Today's opening gap strictly above 4.5% versus the
+  previous trading day's close.
+- The actual opening one-minute candle must be complete
+  and available - normally around 09:16 IST.
+- Latest completed-minute close above developing EMA21.
+- Price strictly above Rs 20.
+- Turnover/liquidity strictly above Rs 20 Cr.
+- ATR above 3.9%, except IPOs.
+
+No Momentum ORB, volume-surge, swing-strength, near-high
+or 8% stop-distance requirement.
+
+
+3. EP RADAR OPENING-RANGE BUY
+
+A separate scan for stocks whose verified opening gap
+is strictly above 4.5%. A normal EP BUY is not required.
+
+Five opening ranges are tracked independently:
+3 minutes, 5 minutes, 15 minutes, 30 minutes and 1 hour.
+
+ORB confirmation follows the same choice as Momentum:
+- CLOSE - completed candle closes strictly above the
+  opening-range high.
+- SPOT - live price is strictly above the high after
+  the opening range has formed.
+
+Current configuration: CLOSE.
+Close confirmation uses completed one-minute candles;
+it does not wait for another full range-sized candle.
+
+The qualifying price must also be:
+- Above developing EMA21.
+- Strictly above Rs 20.
+- Supported by turnover/liquidity above Rs 20 Cr.
+
+No additional Momentum volume-surge, ATR, swing-strength,
+near-high or 8% stop-distance requirement.
+
+Each range can alert once per stock per monitoring run:
+up to five EP-radar alerts.
+
+The 30-minute range covers 09:15 through 09:44 IST.
+Earliest confirmation: spot after 09:45, close around 09:46,
+subject to data availability and the other radar conditions.
+
+
+COMMON NOTES
+
+- Momentum BUY, EP BUY and EP-radar alerts are independent.
+  The same stock can receive all three categories.
+- Momentum and normal EP BUY each alert once per stock
+  per monitoring run.
+- Every stock alert includes Sector; unavailable data
+  appears as NA and does not block the signal.
+- Turnover is the scanner's historical-average liquidity
+  measure including today's developing data - not a
+  requirement for Rs 20 Cr to have traded today alone.
+- Performance uses the first recorded alert price/time
+  per stock per trading day. Later signals do not replace it.
+- End-of-day sector counts include all signal events.
+- Previous trading day's low is shown as the initial stop.
+- Data/provider delays can delay alerts.
+- Restarting the monitor can repeat same-day signals.
+- Alerts do not place orders or guarantee returns.

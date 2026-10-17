@@ -16,6 +16,9 @@ from scanner.alerts import tradingview_chart_url
 
 class MomentumTests(unittest.TestCase):
     def setUp(self):
+        sector_lookup = patch.object(live_monitor, "get_sector", return_value="Specialty Chemicals")
+        self.sector_lookup = sector_lookup.start()
+        self.addCleanup(sector_lookup.stop)
         self.history = pd.DataFrame({
             "timestamp": pd.date_range("2025-01-01", periods=270, tz=live_engine.IST),
             "open": 101.0, "high": 104.0, "low": 70.0,
@@ -194,8 +197,8 @@ class MomentumTests(unittest.TestCase):
         self.state.update({"ema10": 100.0, "ema10_prev": 99.0, "ema21": 98.0, "ema21_prev": 97.0})
         result = live_engine.evaluate(self.state, self.quote)
         self.assertTrue(result["momentum_stock"])
-        self.assertEqual(live_monitor.fmt_alert("BUY", result).splitlines()[1], "Momentum Stock")
-        self.assertEqual(live_monitor.fmt_alert("EP", result).splitlines()[1], "Momentum Stock")
+        self.assertEqual(live_monitor.fmt_alert("BUY", result).splitlines()[2], "Momentum Stock")
+        self.assertEqual(live_monitor.fmt_alert("EP", result).splitlines()[2], "Momentum Stock")
         self.assertTrue(result["buy"], "tag must not change BUY rules")
 
         for update in ({"ema21_prev": 99.0},                     # EMA21 sloping down
@@ -341,6 +344,9 @@ class MomentumTests(unittest.TestCase):
         self.assertNotIn("warning only", message)
         self.assertNotIn("Live scanner only", message)
         self.assertIn("NIFTY 500", message)
+        result["sector"] = "Specialty Chemicals"
+        for kind in ("BUY", "EP"):
+            self.assertIn("Sector: Specialty Chemicals", live_monitor.fmt_alert(kind, result))
 
     def test_tradingview_chart_url_uses_nse_symbol(self):
         self.assertEqual(
@@ -475,10 +481,13 @@ class MomentumTests(unittest.TestCase):
             self.assertGreaterEqual(ep_alerts[0][0], start + timedelta(minutes=1))
             self.assertLess(ep_alerts[0][0], start + timedelta(minutes=2))
             self.assertIn("Gap +4.60%", ep_alerts[0][1])
+            self.assertIn("Sector: Specialty Chemicals", ep_alerts[0][1])
             self.assertFalse(any("MOMENTUM BUY" in message for _, message in delivered))
             with alert_log.open(newline="", encoding="utf-8") as handle:
                 rows = list(csv.DictReader(handle))
             self.assertEqual([row["alert_type"] for row in rows], ["EP"])
+            self.assertEqual(rows[0]["sector"], "Specialty Chemicals")
+            self.sector_lookup.assert_called_once_with("TEST")
 
 
 if __name__ == "__main__":

@@ -12,6 +12,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from scanner.alerts import send, send_document
 from scanner.upstox import current_day_daily, historical_daily, load_nse_equities
 from scanner.indicators import ema
+from scanner.sector import known_sector, resolve_sector
 
 ARTIFACT_DIR = Path("artifacts")
 OUTPUT_FILE = ARTIFACT_DIR / "swing_performance.csv"
@@ -35,6 +36,7 @@ OUTPUT_COLUMNS = [
     "Performance %",
     "Status",
     "Market Context",
+    "Sector",
 ]
 
 COLUMN_DESCRIPTIONS = [
@@ -53,6 +55,7 @@ COLUMN_DESCRIPTIONS = [
     "Weighted realized return plus the marked-to-market return on any remaining size.",
     "Trade open, Partial exit, Full exit, or a data status.",
     "Bull Market, Bear Market, or Choppy Market at entry.",
+    "Company sector from Upstox company profile by ISIN; NA if not supplied.",
 ]
 
 VISIBLE_COLUMNS = [column for column in OUTPUT_COLUMNS if column != "Alert ID"]
@@ -142,7 +145,7 @@ def _write_excel(frame):
     widths = {
         "A": 8, "B": 20, "C": 18, "D": 13, "E": 14, "F": 15,
         "G": 13, "H": 13, "I": 13, "J": 14, "K": 28, "L": 13,
-        "M": 18, "N": 18, "O": 18,
+        "M": 18, "N": 18, "O": 18, "P": 36,
     }
     for column, width in widths.items():
         detail_sheet.column_dimensions[column].width = width
@@ -255,6 +258,7 @@ def _send_exit_alerts(frame, previous_records):
         events.append(
             "\n".join([
                 f"{status.upper()} | {row.get('Ticker Name', '')}",
+                f"Sector: {row.get('Sector', 'NA')}",
                 f"SL Type: {row.get('SL Type', '')} | Latest Close: Rs {latest_close}",
                 f"Performance: {performance_text} | Holding Days: {row.get('Holding Days', '')}",
             ])
@@ -318,6 +322,7 @@ def _read_current_alerts():
                 "Date Time": source.get("alert_time_ist", source.get("alert_date", "")),
                 "Alert Type": source.get("alert_type", "BUY") or "BUY",
                 "Market Context": source.get("market_context", ""),
+                "Sector": source.get("sector", ""),
             }
             row["Alert ID"] = _alert_id(row)
             rows.append(row)
@@ -483,7 +488,13 @@ def run():
     previous_records = _read_existing()
     records = dict(previous_records)
     for alert in _read_current_alerts():
-        records[alert["Alert ID"]] = {**records.get(alert["Alert ID"], {}), **alert}
+        previous = records.get(alert["Alert ID"], {})
+        alert["Sector"] = (
+            known_sector(alert.get("Sector"))
+            or known_sector(previous.get("Sector"))
+            or alert.get("Sector", "")
+        )
+        records[alert["Alert ID"]] = {**previous, **alert}
 
     if not records:
         ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
@@ -498,6 +509,7 @@ def run():
     key_by_symbol = dict(zip(universe.trading_symbol, universe.instrument_key))
     output = []
     for alert in records.values():
+        alert["Sector"] = resolve_sector(alert["Ticker Name"], alert.get("Sector"))
         key = key_by_symbol.get(alert["Ticker Name"])
         if not key:
             output.append({**alert, "Status": "NO INSTRUMENT"})

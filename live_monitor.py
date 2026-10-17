@@ -18,6 +18,7 @@ from scanner.breadth import send_breadth_alerts
 from scanner.live_engine import build_state, evaluate, update_intraday, _completed
 from scanner.live_data import intraday_minutes
 from scanner.indicators import ema
+from scanner.sector import get_sector, UNAVAILABLE_SECTOR
 from scanner.upstox import (
     load_instruments,
     load_nse_equities,
@@ -222,6 +223,7 @@ def fmt_alert(kind, r):
     if kind == "EP":
         return (
             f"EPISODIC PIVOT BUY - {r['symbol']}\n"
+            f"Sector: {r.get('sector', UNAVAILABLE_SECTOR)}\n"
             f"{momentum_tag}"
             f"Price Rs {r['price']:.2f} | Gap {(r['day_open'] / r['prev_close'] - 1) * 100:+.2f}%\n"
             f"Prev Day Low SL Rs {r['prev_low']:.2f}\n"
@@ -240,6 +242,7 @@ def fmt_alert(kind, r):
     volume_line = f"\n{' | '.join(orb_and_volume)}" if orb_and_volume else ""
     return (
         f"MOMENTUM BUY - {r['symbol']}\n"
+        f"Sector: {r.get('sector', UNAVAILABLE_SECTOR)}\n"
         f"{momentum_tag}"
         f"Price Rs {r['price']:.2f} | Prev Day Low SL Rs {r['prev_low']:.2f}\n"
         f"Max Position {r['position_size_pct']:.2f}%\n"
@@ -263,7 +266,7 @@ def run():
     with alert_log.open("w", newline="", encoding="utf-8") as f:
         csv.writer(f).writerow([
             "alert_date", "alert_time_ist", "alert_type", "symbol",
-            "alert_price", "sl_price", "market_context",
+            "alert_price", "sl_price", "market_context", "sector",
         ])
     universe = load_nse_equities()
     benchmark_name = "NIFTY 500"
@@ -506,6 +509,7 @@ def run():
             # not alter either signal's checks or once-per-day suppression.
             for instrument_key, alert_key, result in ep_evaluated:
                 if result["episodic_pivot"] and alert_key not in sent_ep:
+                    result["sector"] = get_sector(result["symbol"])
                     sent_ep.add(alert_key)
                     with alert_log.open("a", newline="", encoding="utf-8") as f:
                         csv.writer(f).writerow([
@@ -516,11 +520,13 @@ def run():
                             f'{result["price"]:.2f}',
                             f'{result["prev_low"]:.2f}',
                             result.get("market_regime", ""),
+                            result["sector"],
                         ])
                     send(fmt_alert("EP", result), chart_symbol=result["symbol"])
 
             for instrument_key, alert_key, result in evaluated:
                 if result["buy"] and alert_key not in sent_buy:
+                    result["sector"] = get_sector(result["symbol"])
                     sent_buy.add(alert_key)
                     with alert_log.open("a", newline="", encoding="utf-8") as f:
                         csv.writer(f).writerow([
@@ -531,6 +537,7 @@ def run():
                             f'{result["price"]:.2f}',
                             f'{result["prev_low"]:.2f}',
                             result.get("market_regime", ""),
+                            result["sector"],
                         ])
                     send(fmt_alert("BUY", result), chart_symbol=result["symbol"])
 

@@ -9,6 +9,28 @@ from config import settings
 
 TELEGRAM_SAFE_MESSAGE_LENGTH = 3900
 
+
+def _text_length(text):
+    return sum(2 if ord(character) > 0xFFFF else 1 for character in text)
+
+
+def _text_chunks(text):
+    """Keep each part below Telegram's limit, including UTF-16 emoji units."""
+    chunks = []
+    start = 0
+    length = 0
+    for index, character in enumerate(text):
+        units = 2 if ord(character) > 0xFFFF else 1
+        if length + units > TELEGRAM_SAFE_MESSAGE_LENGTH:
+            chunks.append(text[start:index])
+            start = index
+            length = 0
+        length += units
+    if start < len(text):
+        chunks.append(text[start:])
+    return chunks
+
+
 def _chat_ids():
     raw = settings.TELEGRAM_CHAT_ID
     return [x.strip() for x in raw.split(",") if x.strip()]
@@ -24,10 +46,7 @@ def tradingview_chart_url(symbol):
 
 def send(message, chart_symbol=None):
     message = str(message)
-    chunks = [
-        message[index:index + TELEGRAM_SAFE_MESSAGE_LENGTH]
-        for index in range(0, len(message), TELEGRAM_SAFE_MESSAGE_LENGTH)
-    ] or [""]
+    chunks = _text_chunks(message) or [""]
 
     if not settings.TELEGRAM_BOT_TOKEN or not settings.TELEGRAM_CHAT_ID:
         for chunk in chunks:
@@ -155,14 +174,11 @@ def send_photo(image_bytes, caption=None, chart_symbol=None, filename="chart.png
             print(f"Open TradingView Chart: {tradingview_chart_url(chart_symbol)}")
         return
 
-    fits = len(caption) <= TELEGRAM_CAPTION_LIMIT
+    fits = _text_length(caption) <= TELEGRAM_CAPTION_LIMIT
     data = {"caption": caption if fits else ""}
     if chart_symbol and fits:
         data["reply_markup"] = json.dumps(_chart_button(chart_symbol))
-    chunks = [
-        caption[index:index + TELEGRAM_SAFE_MESSAGE_LENGTH]
-        for index in range(0, len(caption), TELEGRAM_SAFE_MESSAGE_LENGTH)
-    ]
+    chunks = _text_chunks(caption)
     for chat_id in _chat_ids():
         photo_ok = _post(
             "sendPhoto", chat_id,
@@ -176,4 +192,4 @@ def send_photo(image_bytes, caption=None, chart_symbol=None, filename="chart.png
             _send_text(chat_id, chunks, chart_symbol)
 
 def format_result(r,state):
-    return f"{state} | {r['symbol']}\nPrice ₹{r['price']:.2f} | Score {r['score']}/7\nPivot ₹{r['pivot']:.2f} | ATR {r['atr_pct']:.1f}%\nRS20 {r['rs20']:.1f}% | 52W distance {r['from_52w_high']:.1f}%\nSwing {r['swing_return']:.1f}% | RVOL {r['rvol']:.1f}x\nVCP={r['vcp']} | Breakout={r['vcp_breakout']} | Pocket Pivot={r['pocket_pivot']}"
+    return f"{state} | {r['symbol']}\nSector: {r.get('sector', 'NA')}\nPrice ₹{r['price']:.2f} | Score {r['score']}/7\nPivot ₹{r['pivot']:.2f} | ATR {r['atr_pct']:.1f}%\nRS20 {r['rs20']:.1f}% | 52W distance {r['from_52w_high']:.1f}%\nSwing {r['swing_return']:.1f}% | RVOL {r['rvol']:.1f}x\nVCP={r['vcp']} | Breakout={r['vcp_breakout']} | Pocket Pivot={r['pocket_pivot']}"

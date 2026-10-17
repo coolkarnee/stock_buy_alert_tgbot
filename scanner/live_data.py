@@ -1,8 +1,6 @@
-import math
 from urllib.parse import quote
 
 import pandas as pd
-import yfinance as yf
 
 from scanner.upstox import BASE, _request_json, load_instruments
 
@@ -20,18 +18,6 @@ def find_smallcap250_key():
             f"found {len(matches)}."
         )
     return matches[0]["instrument_key"]
-
-
-def market_cap_cr(symbol):
-    ticker = yf.Ticker(f"{symbol}.NS")
-    info = ticker.get_info()
-    value = info.get("marketCap")
-    if info.get("currency") != "INR" or value is None:
-        raise ValueError("INR total market capitalization is unavailable")
-    value = float(value) / 1e7
-    if not math.isfinite(value) or value <= 0:
-        raise ValueError("Invalid total market capitalization")
-    return value
 
 
 def intraday_minutes(instrument_key):

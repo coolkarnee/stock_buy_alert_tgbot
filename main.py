@@ -2,6 +2,7 @@ import pandas as pd
 from scanner.upstox import load_nse_equities,find_nifty500_key,historical_daily,historical_many
 from scanner.engine import analyze
 from scanner.alerts import send,format_result
+from scanner.sector import get_sector
 
 def run(limit=None):
     universe=load_nse_equities()
@@ -46,6 +47,7 @@ def run(limit=None):
                 # Telegram alerts are BUY-only. Candidate results remain in scan_results.csv
                 # for analysis but are not sent as Telegram stock alerts.
                 if result['buy']:
+                    result['sector']=get_sector(symbol)
                     send(format_result(result,'BUY'), chart_symbol=result['symbol'])
         except Exception as exc:
             status_rows.append({'symbol':symbol,'instrument_key':row.instrument_key,'data_status':'analysis_failed','history_bars':len(df),'error':str(exc)})

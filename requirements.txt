@@ -4,6 +4,5 @@ requests>=2.31,<3
 upstox-python-sdk>=2.23.0,<3
 # Imported directly by live_monitor.py when decoding Upstox protobuf messages.
 protobuf>=4.25,<7
-yfinance>=0.2.54,<1
 openpyxl>=3.1,<4
 matplotlib>=3.8,<4

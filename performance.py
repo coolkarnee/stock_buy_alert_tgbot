@@ -1,4 +1,5 @@
 import csv
+from collections import Counter
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from pathlib import Path
@@ -7,6 +8,7 @@ import pandas as pd
 
 from scanner.alerts import send
 from scanner.live_data import intraday_minutes
+from scanner.sector import resolve_sector
 from scanner.upstox import load_nse_equities, current_day_daily
 
 IST = ZoneInfo("Asia/Kolkata")
@@ -20,6 +22,27 @@ def _move_pct(price, reference):
     if reference is None or price <= 0:
         return None
     return (reference - price) / price * 100.0
+
+
+def sector_summary(alerts):
+    groups = {}
+    for alert in alerts:
+        sector = alert["sector"]
+        group = groups.setdefault(sector, {"types": Counter(), "symbols": set()})
+        group["types"][alert.get("alert_type") or "BUY"] += 1
+        group["symbols"].add(alert["symbol"])
+    lines = ["", "SECTOR ALERT BREAKDOWN"]
+    for sector, group in sorted(
+        groups.items(), key=lambda item: (-sum(item[1]["types"].values()), item[0])
+    ):
+        counts = group["types"]
+        lines.append(
+            f"{sector}: {sum(counts.values())} alerts | "
+            f"{counts['BUY']} Momentum BUY | {counts['EP']} EP | "
+            f"{len(group['symbols'])} distinct stocks"
+        )
+    lines.append("Counts are alert events, not winning trades; a stock can have both alert types.")
+    return lines
 
 
 def run():
@@ -46,6 +69,9 @@ def run():
         send(report)
         write_summary("No BUY alerts were recorded, so there is no intraday performance conclusion.")
         return
+
+    for alert in alerts:
+        alert["sector"] = resolve_sector(alert["symbol"], alert.get("sector"))
 
     universe = load_nse_equities()
     key_by_symbol = dict(zip(universe.trading_symbol, universe.instrument_key))
@@ -149,6 +175,10 @@ def run():
                 (symbol, alert_price, None, None, None, None, "ERROR")
             )
 
+    rows = [
+        (*row, alert["sector"], alert.get("alert_type") or "BUY")
+        for row, alert in zip(rows, alerts)
+    ]
     lines = [f"📊 LIVE ALERT PERFORMANCE | {today}", ""]
 
     for (
@@ -159,7 +189,10 @@ def run():
         high_after_alert,
         high_move,
         status,
+        sector,
+        alert_type,
     ) in rows:
+        symbol = f"{symbol} ({alert_type}) | Sector: {sector}"
         if status != "OK":
             if close is not None and status == "NO HIGH DATA":
                 close_text = (
@@ -182,6 +215,8 @@ def run():
             f"Post-alert High ₹{high_after_alert:.2f} | "
             f"Max Move {high_move:+.2f}%"
         )
+
+    lines.extend(sector_summary(alerts))
 
     close_moves = [r[3] for r in rows if r[6] == "OK" and r[3] is not None]
     high_moves = [r[5] for r in rows if r[6] == "OK" and r[5] is not None]
@@ -236,6 +271,8 @@ def run():
                 "post_alert_high_price",
                 "post_alert_high_move_pct",
                 "status",
+                "sector",
+                "alert_type",
             ]
         )
 
@@ -247,6 +284,8 @@ def run():
             high_after_alert,
             high_move,
             status,
+            sector,
+            alert_type,
         ) in rows:
             writer.writerow(
                 [
@@ -258,6 +297,8 @@ def run():
                     "" if high_after_alert is None else f"{high_after_alert:.2f}",
                     "" if high_move is None else f"{high_move:.2f}",
                     status,
+                    sector,
+                    alert_type,
                 ]
             )
 

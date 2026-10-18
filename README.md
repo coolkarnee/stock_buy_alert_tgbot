@@ -85,7 +85,7 @@ Run from the repo root. Uses the venv interpreter directly, so activation is not
 | --- | --- |
 | Create venv (one-time) | `& "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe" -m venv .venv` |
 | Install / update deps | `.\.venv\Scripts\python.exe -m pip install -r requirements.txt` |
-| Run offline tests (no network) | `.\.venv\Scripts\python.exe -m unittest test_live_engine test_sector test_alerts test_ep_radar -v` |
+| Run offline tests (no network) | `.\.venv\Scripts\python.exe -m unittest test_live_engine test_sector test_alerts test_ep_radar test_signal_history test_rate_limits -v` |
 | Preview breadth alerts (live TradingView, prints text; no Telegram without tokens) | `.\.venv\Scripts\python.exe -c "from datetime import date; from scanner.breadth import send_breadth_alerts; send_breadth_alerts(date.today())"` |
 | Check Upstox index symbols (needs token) | `$env:UPSTOX_ACCESS_TOKEN="..."; .\.venv\Scripts\python.exe test_upstox_indices.py` |
 | Telegram connectivity (needs bot token + chat ID) | `.\.venv\Scripts\python.exe test_telegram.py` |
@@ -118,7 +118,11 @@ Universe sources are external services, not bundled files. Individual source fai
 
 Both scanners fetch approximately two years of daily candles for each eligible stock. Batch scanning uses Nifty 500 as its benchmark and six worker threads, and requires 260 daily bars. Live state preparation uses `UPSTOX_MAX_WORKERS` (default eight), removes candles dated today, and requires at least one completed daily bar. Live market context uses Nifty Smallcap 250 and falls back to Nifty 500 if the Smallcap benchmark lookup or history is unavailable. Failed or empty history requests are skipped.
 
-Upstox historical requests use bearer-token authentication, a shared rate limiter configured for 450 requests per minute, a 15-second default timeout, and one retry for selected transient HTTP statuses or request exceptions. Universe CSVs, the NSE IPO tracker, and the instrument master use separate request paths and do not share all of those retry/rate-limit behaviors.
+Upstox REST requests share `scanner/upstox.py`'s thread-safe limiter across daily history, intraday candles, quote snapshots, company profiles and IPO pagination, including every retry. Safety budgets are `UPSTOX_REQUESTS_PER_SECOND=8`, `UPSTOX_REQUESTS_PER_MINUTE=480` and `UPSTOX_REQUESTS_PER_30_MINUTES=1950`, below the stated broker ceilings of 10/s, 500/min and 2,000/30min. The limiter spaces calls against the tightest budget: **one request approximately every 0.923 seconds at the defaults** (about 65/min sustained), not 8/s or 480/min sustained. Raising the longer-window budgets reduces safety headroom; 8/s alone does not protect the 30-minute quota. Invalid budgets above those ceilings fail explicitly. Most requests use a 15-second timeout and one transient-error retry; IPO pages retain two retries and a 20-second timeout. HTTP 429/selected 5xx responses set a shared cooldown, honoring numeric or HTTP-date `Retry-After` without the previous five-second cap. Exhausted requests still surface errors.
+
+This is a **per-process** REST budget, not an account-wide quota coordinator. Do not overlap batch, live, performance, swing or other applications using the same Upstox account/token; independent processes/runners can exceed the combined broker quota. The live WebSocket streams prices without one REST request per tick; its SDK connection/reconnect and subscription limits are separate. Public Nifty CSVs and the Upstox instrument-master asset download are not calls to `api.upstox.com` and remain outside this limiter.
+
+Budget compliance trades throughput for safety: 900 one-request-per-stock history loads take about 13.8 minutes at minimum, before other calls/network delays. Full-universe startup can therefore delay opening alerts; start sufficiently early or arrange preloading before the session. Roughly 65 REST calls/minute sustained are available across candle refreshes, profiles and other requests. A large EP radar cannot refresh every candidate each minute simultaneously: candle requests queue and close confirmations can be reconstructed later, while spot alerts use the live price available when evaluated. Rate limiting does not guarantee timely provider data or Telegram delivery.
 
 ## Batch Analysis Rules
 
@@ -347,7 +351,15 @@ Missing ISINs, absent/invalid `data.sector`, API failures, and instrument-master
 
 The live alert CSV appends a `sector` column so downstream reports preserve the classification recorded at entry. The end-of-day report displays sector beside each stock and, after stock performances, lists total alerts, Momentum BUY count, EP count, distinct stock count, and EP radar ORB count per sector. Counts include all today's logged signal events, even when price/performance data is missing. A stock can contribute an EP, a Momentum BUY, and up to five radar ORB events, but remains one distinct stock within its sector; these are not counts of winning trades.
 
-### First-alert performance entry
+### Signal-frequency context
+
+Every live EP, Momentum, and EP-radar BUY message appends a line such as `Signal frequency: 2 today | 3 in last 7 days (all live signal types, including this alert).` Counts combine all live signal types for the same stock, including each radar timeframe separately. "Last 7 days" means the current IST calendar date plus the preceding six dates, not Monday-to-Sunday or seven trading sessions. The current signal is included; events for other stocks and future dates are excluded. Batch scan alerts and swing exit notifications are not included.
+
+`scanner/signal_history.py` maintains `artifacts/signal_history.csv` separately from the first-entry trade history. The live workflow commits this history alongside market breadth even when the scanner times out, provided the save step completes successfully. Later runs on that branch load it before counting; restarting still does not suppress an otherwise eligible repeat. Counts describe recorded signal events, not independently verified Telegram deliveries or a statistical increase in win probability.
+
+History starts when this feature is deployed; older first-entry swing rows cannot reconstruct all earlier signals. Missing pre-feature events are not invented. Counts can be incomplete if historical files were unavailable, a run was cancelled before persistence, or a history push failed. Swing CSV/Excel append `Signals On Entry Day` and `Signals In Last 7 Days`, covering recorded events through the end of the entry date; these counts can be higher than the first alert's contemporaneous count. Legacy entries with no available event coverage retain prior counts or show `NA`. Loading today's artifact for reporting deduplicates events already present in the signal history.
+
+### First-alert trade selection
 
 Daily and swing performance use **one entry per stock per IST trading date**, selected by the earliest recorded alert timestamp, regardless of whether it is EP, Momentum BUY, or EP radar ORB. The first alert's price, time, type, previous-day-low SL, and market context remain the entry inputs. Later signals are confirmations, not new trades or replacement entry prices. The full `live_alerts.csv` retains every event, and sector counts still count every event. Daily `performance.csv` and the swing CSV/Excel contain only the first-entry trade. Sector counts can therefore exceed the number of evaluated trades.
 
@@ -357,9 +369,11 @@ The shared selector `scanner/alert_history.py` sorts by timestamp, not file orde
 
 Offline regressions in `test_sector.py` cover ISIN resolution, the exact company-profile URL, `data.sector` parsing, caching, missing/invalid fields, request failures, legacy CSV compatibility, daily counts, and Excel sector export. `test_alerts.py` covers message splitting; live-monitor tests mock the sector lookup so they remain offline. Run all three suites with the virtual-environment command in the quick reference. These tests use mocked Upstox/Telegram calls, not live credentials.
 
-Validated on 2026-10-17 in `.venv`: `$env:PYTHONIOENCODING='utf-8'; .\.venv\Scripts\python.exe -W ignore::DeprecationWarning -m unittest test_ep_radar test_live_engine test_sector test_alerts -q` — **77 tests passed**. The radar tests cover both close/spot modes, all five ranges including 30-minute completion boundaries, EMA21/price/turnover gates, strict/equal/wick/unfinished/missing-candle cases, independent EP + Momentum dispatch, per-range suppression, chronological first-entry selection, and daily/swing integration. Deprecation warnings from existing pandas/NumPy date arithmetic are suppressed in this command. Live API availability and actual Telegram delivery are not exercised by these offline tests.
+Validated on 2026-10-18: **94 tests passed** with `$env:PYTHONIOENCODING='utf-8'; .\.venv\Scripts\python.exe -W ignore::DeprecationWarning -m unittest test_rate_limits test_signal_history test_ep_radar test_live_engine test_sector test_alerts -q`. Tests cover 4,001 simulated request admissions against all three sliding quota windows, parallel limiter use, uncapped Retry-After/cooldowns, IPO pagination through the shared limiter, Telegram text/photo/document Unicode boundaries and retries, rolling signal counts, persistence/reload, IST boundaries, first-entry preservation, market-regime workbook statistics, and existing alert/sector behavior. Deprecation warnings from existing pandas/NumPy date arithmetic are suppressed in this command. Live API availability and actual Telegram delivery are not exercised by these offline tests.
 
-Telegram delivery (`_post()` in `scanner/alerts.py`) paces messages per chat (1.1 s for private chats, 3.1 s for group chats whose ID starts with `-`), honours HTTP 429 `retry_after` (capped at 60 s), and retries network/5xx errors up to 3 attempts. The Bot API has no daily message cap; the limits are about 1 msg/s per chat, 20 msgs/min per group, and about 30 msgs/s per bot.
+Telegram delivery (`_post()` in `scanner/alerts.py`) paces messages per chat (1.1 s for private chats, 3.1 s for group chats whose ID starts with `-`) and across the process at no more than 25 sends/s. It honors the full HTTP 429 `retry_after`, and retries network/5xx errors up to 3 attempts, logging exhausted delivery explicitly. Text, photos and documents share that path; document retries reuse the complete file bytes, not a consumed file handle. The Bot API limits are approximately 1 msg/s per chat, 20 msgs/min per group and 30 msgs/s per bot; pacing does not coordinate separate processes using the same bot.
+
+Text is split losslessly into parts of at most **3,900 UTF-16 units**, below Telegram's 4,096 text limit, including emoji and the new signal-frequency line. The chart button stays on the first text part. Photo and document captions are checked against **1,024 UTF-16 units**; longer captions are sent as separate safely split text rather than rejected or truncated. Normal BUY alerts do not need shortening. Large summaries and unusually long sector labels automatically split. File size, credentials, connectivity and provider-side failures can still prevent delivery.
 
 ### TradingView Market Breadth Alerts
 
@@ -434,6 +448,8 @@ The latest CSV remains committed under `artifacts/swing_performance.csv` as the 
 
 For a shareable web-format overview, open [`docs/stock-pattern-lab.html`](./docs/stock-pattern-lab.html) in a browser or publish it with any static web host.
 
+The Excel Dashboard also groups trades by **entry-time Bull Market, Bear Market, Choppy Market**, with an **Unknown** group for missing/unrecognized context. Each group shows total trades, open trades, partial exits, full exits, closed wins/losses/breakeven, closed-trade win rate, all-trade mean performance, data/other-status count, and the number of full exits with usable returns. Only numeric returns on **Full exit** rows enter win rate (breakeven remains in its denominator); open and partial trades cannot become closed wins. Mean performance includes valid open/partial returns and is an unweighted trade average, not compounded portfolio P&L. Existing overall metrics and the separate `Sector` detail column remain unchanged.
+
 ## Configuration
 
 Environment variables read in `config/settings.py`:
@@ -455,13 +471,13 @@ There are six GitHub Actions workflows. The live alert, live performance, and sw
 | Workflow | Schedule | Action |
 | --- | --- | --- |
 | `.github/workflows/daily-scan.yml` | Manual only | Runs `main.py`, then uploads `scan_results.csv` for seven days. Artifact upload fails if the file was not created. The comment mentioning a daily scan is stale; there is no `schedule` trigger in this file. |
-| `.github/workflows/live-alerts.yml` | Manual only | Runs `live_monitor.py`. The process waits until 09:15 IST, monitors until 15:20 IST, and uploads `live_alerts.csv` even when the job fails. It then commits `artifacts/market_breadth.csv` (requires `contents: write`; rebases before push). A concurrency group cancels an older run on the same branch. |
+| `.github/workflows/live-alerts.yml` | Manual only | Runs `live_monitor.py`. The process waits until 09:15 IST, monitors until 15:20 IST, and uploads `live_alerts.csv` even when the job fails. It commits `artifacts/market_breadth.csv` and `artifacts/signal_history.csv` (requires `contents: write`; rebases before push). A concurrency group cancels an older run on the same branch. |
 | `.github/workflows/live-performance.yml` | After successful live alerts and manual | Downloads the exact triggering `live-alerts.yml` artifact, runs `performance.py`, and uploads the daily report plus alert input for 30 days. |
 | `.github/workflows/swing-performance.yml` | After successful live performance and manual | Downloads the alert input, recalculates all persistent swing rows until exit or report date, commits `artifacts/swing_performance.csv`, uploads the formatted Excel workbook for 90 days, and sends it to Telegram. |
 | `.github/workflows/test-ipo-universe.yml` | Manual only | Checks out the hard-coded `Nilesh_branch_to_add_ipos` branch, installs dependencies, and calls the Upstox IPO API to print listed IPO symbols since 2026-01-01. It is not a main-branch test until its checkout ref is changed. |
 | `.github/workflows/test-telegram.yml` | Manual only | Runs the fixed Telegram connectivity message. |
 
-The daily scan and live monitor are separate jobs; the batch run does not feed state to the live process. The live performance and swing performance jobs consume workflow artifacts, while the committed swing CSV and market-breadth CSV provide persistence between runs.
+The daily scan and live monitor are separate jobs; the batch run does not feed state to the live process. The live performance and swing performance jobs consume workflow artifacts, while the committed swing, signal-history and market-breadth CSVs provide persistence between runs.
 
 GitHub-hosted jobs are hard-killed at 6 hours, and the live monitor runs until 15:20 IST, so a live run started before ~09:20 IST is killed and ends as `cancelled`/`failure`. `live-performance.yml` (and therefore `swing-performance.yml`) then shows "This job was skipped". The `Run live scanner` step has `timeout-minutes: 355`, so it is stopped before the 6h job kill and the `if: always()` steps (breadth commit, `live-alerts` upload) still run. Chosen practice: run `NSE Live Alert Performance` manually after the live run; it uses the latest live run's `live-alerts` artifact, and its success triggers swing performance automatically.
 
@@ -485,14 +501,17 @@ Before enabling this reference branch in the main branch:
 | `scanner/breadth.py` | TradingView breadth scraping, three chart+text alerts, MA history/trend |
 | `scanner/universe.py` | Nifty constituent and NSE IPO universe construction |
 | `scanner/upstox.py` | Instrument lookup, historical requests, rate limiting, and data conversion |
+| `test_rate_limits.py` | Offline simulated REST quotas, retry cooldowns, and IPO request routing |
 | `scanner/indicators.py` | EMA and ATR calculations |
 | `scanner/vcp.py` | Original and optimized VCP evaluation |
 | `scanner/engine.py` | Historical per-stock metrics, candidate score, and BUY filters |
 | `scanner/live_engine.py` | Completed-bar state and per-tick signal evaluation |
+| `scanner/signal_history.py` | Persistent live signal events and per-stock today/rolling-seven-day counts |
 | `scanner/live_data.py` | Live market-cap lookup, Smallcap 250 instrument lookup, and intraday candle requests |
 | `swing_performance.py` | Persistent alert performance calculation until exit |
-| `artifacts/` | Versioned latest swing-performance CSV and ~2-month market-breadth history (`market_breadth.csv`) |
+| `artifacts/` | Versioned swing-performance CSV, signal-event history (`signal_history.csv`), and ~2-month market-breadth history (`market_breadth.csv`) |
 | `docs/stock-pattern-lab.html` | Standalone shareable web-format overview |
+| `docs/telegram-trader-rules.txt` | Copy-paste Telegram rules, signal counts, and report interpretation |
 | `scanner/alerts.py` | Telegram dispatch and batch alert formatting |
 | `config/settings.py` | Credentials and scanner thresholds |
 | `test_telegram.py` | Manual Telegram connectivity check |

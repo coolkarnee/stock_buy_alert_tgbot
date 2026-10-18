@@ -19,6 +19,7 @@ from scanner.live_engine import build_state, evaluate, update_intraday, update_e
 from scanner.live_data import intraday_minutes
 from scanner.indicators import ema
 from scanner.sector import get_sector, UNAVAILABLE_SECTOR
+from scanner.signal_history import SignalHistory, SIGNAL_HISTORY_FILE
 from scanner.upstox import (
     load_instruments,
     load_nse_equities,
@@ -284,6 +285,7 @@ def fmt_ep_orb_alert(state, window, breakout):
 
 
 def run():
+    signal_history = SignalHistory(SIGNAL_HISTORY_FILE)
     alert_log = Path("live_alerts.csv")
     with alert_log.open("w", newline="", encoding="utf-8") as f:
         csv.writer(f).writerow([
@@ -540,10 +542,11 @@ def run():
                 if result["episodic_pivot"] and alert_key not in sent_ep:
                     result["sector"] = get_sector(result["symbol"])
                     sent_ep.add(alert_key)
+                    alert_time = datetime.now(IST)
                     with alert_log.open("a", newline="", encoding="utf-8") as f:
                         csv.writer(f).writerow([
-                            datetime.now(IST).date().isoformat(),
-                            datetime.now(IST).isoformat(),
+                            alert_time.date().isoformat(),
+                            alert_time.isoformat(),
                             "EP",
                             result["symbol"],
                             f'{result["price"]:.2f}',
@@ -551,16 +554,18 @@ def run():
                             result.get("market_regime", ""),
                             result["sector"],
                         ])
-                    send(fmt_alert("EP", result), chart_symbol=result["symbol"])
+                    frequency = signal_history.record(result["symbol"], "EP", alert_time)
+                    send(fmt_alert("EP", result) + frequency, chart_symbol=result["symbol"])
 
             for instrument_key, alert_key, result in evaluated:
                 if result["buy"] and alert_key not in sent_buy:
                     result["sector"] = get_sector(result["symbol"])
                     sent_buy.add(alert_key)
+                    alert_time = datetime.now(IST)
                     with alert_log.open("a", newline="", encoding="utf-8") as f:
                         csv.writer(f).writerow([
-                            datetime.now(IST).date().isoformat(),
-                            datetime.now(IST).isoformat(),
+                            alert_time.date().isoformat(),
+                            alert_time.isoformat(),
                             "BUY",
                             result["symbol"],
                             f'{result["price"]:.2f}',
@@ -568,7 +573,8 @@ def run():
                             result.get("market_regime", ""),
                             result["sector"],
                         ])
-                    send(fmt_alert("BUY", result), chart_symbol=result["symbol"])
+                    frequency = signal_history.record(result["symbol"], "BUY", alert_time)
+                    send(fmt_alert("BUY", result) + frequency, chart_symbol=result["symbol"])
 
             for instrument_key in quotes:
                 state = states[instrument_key]
@@ -577,10 +583,11 @@ def run():
                     if alert_key in sent_ep_orb:
                         continue
                     state["sector"] = get_sector(state["symbol"])
+                    alert_time = datetime.now(IST)
                     with alert_log.open("a", newline="", encoding="utf-8") as f:
                         csv.writer(f).writerow([
-                            datetime.now(IST).date().isoformat(),
-                            datetime.now(IST).isoformat(),
+                            alert_time.date().isoformat(),
+                            alert_time.isoformat(),
                             f"EP_ORB_{window}M",
                             state["symbol"],
                             f'{breakout["price"]:.2f}',
@@ -588,7 +595,8 @@ def run():
                             state.get("market_regime", ""),
                             state["sector"],
                         ])
-                    send(fmt_ep_orb_alert(state, window, breakout), chart_symbol=state["symbol"])
+                    frequency = signal_history.record(state["symbol"], f"EP_ORB_{window}M", alert_time)
+                    send(fmt_ep_orb_alert(state, window, breakout) + frequency, chart_symbol=state["symbol"])
                     sent_ep_orb.add(alert_key)
 
             now = time.time()

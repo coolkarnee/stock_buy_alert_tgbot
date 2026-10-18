@@ -40,61 +40,19 @@ def _ipo_symbols():
     IPO_START, and later let load_nse_equities() restrict them to NSE_EQ
     instruments. This replaces the unreliable NSE public IPO-tracker URL.
     """
-    import os
-    import time
-
-    token = os.getenv("UPSTOX_ACCESS_TOKEN", "")
-    if not token:
-        raise RuntimeError("UPSTOX_ACCESS_TOKEN is not configured.")
+    from scanner.upstox import _request_json
 
     url = "https://api.upstox.com/v2/ipos"
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/json",
-    }
 
     symbols = set()
     page = 1
     records = 30
 
     while True:
-        payload = None
-        last_error = None
-
-        for attempt in range(3):
-            try:
-                response = requests.get(
-                    url,
-                    params={
-                        "status": "listed",
-                        "page_number": page,
-                        "records": records,
-                    },
-                    headers=headers,
-                    timeout=20,
-                )
-
-                if response.status_code in {429, 500, 502, 503, 504}:
-                    last_error = RuntimeError(
-                        f"HTTP {response.status_code}"
-                    )
-                    if attempt < 2:
-                        time.sleep(2 * (attempt + 1))
-                        continue
-
-                response.raise_for_status()
-                payload = response.json()
-                break
-
-            except requests.RequestException as exc:
-                last_error = exc
-                if attempt < 2:
-                    time.sleep(2 * (attempt + 1))
-
-        if payload is None:
-            raise RuntimeError(
-                f"Upstox IPO API failed on page {page}: {last_error}"
-            )
+        payload = _request_json(
+            url, timeout=20, retries=2,
+            params={"status": "listed", "page_number": page, "records": records},
+        )
 
         page_data = payload.get("data", [])
         if not page_data:

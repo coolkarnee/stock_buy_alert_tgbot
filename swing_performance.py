@@ -14,6 +14,7 @@ from scanner.upstox import current_day_daily, historical_daily, load_nse_equitie
 from scanner.indicators import ema
 from scanner.sector import known_sector, resolve_sector
 from scanner.alert_history import first_daily_alerts
+from scanner.signal_history import SignalHistory, SIGNAL_HISTORY_FILE
 
 ARTIFACT_DIR = Path("artifacts")
 OUTPUT_FILE = ARTIFACT_DIR / "swing_performance.csv"
@@ -38,6 +39,8 @@ OUTPUT_COLUMNS = [
     "Status",
     "Market Context",
     "Sector",
+    "Signals On Entry Day",
+    "Signals In Last 7 Days",
 ]
 
 COLUMN_DESCRIPTIONS = [
@@ -57,6 +60,8 @@ COLUMN_DESCRIPTIONS = [
     "Trade open, Partial exit, Full exit, or a data status.",
     "Bull Market, Bear Market, or Choppy Market at entry.",
     "Company sector from Upstox company profile by ISIN; NA if not supplied.",
+    "All recorded live signals for this stock on its entry date; not extra trades.",
+    "All recorded live signals over the entry date and preceding six IST dates.",
 ]
 
 VISIBLE_COLUMNS = [column for column in OUTPUT_COLUMNS if column != "Alert ID"]
@@ -137,6 +142,41 @@ def _write_excel(frame):
     summary_sheet.column_dimensions["B"].width = 22
     summary_sheet.column_dimensions["D"].width = 18
     summary_sheet.column_dimensions["E"].width = 14
+    regime_headers = [
+        "Entry market", "Total trades", "Trade open", "Partial exits", "Full exits",
+        "Closed wins", "Closed losses", "Closed breakeven", "Closed win rate",
+        "Mean performance (all)", "Data / other status", "Closed with return",
+    ]
+    summary_sheet.cell(15, 1, "TRADE OUTCOMES BY MARKET CONTEXT AT ENTRY")
+    for column, header in enumerate(regime_headers, start=1):
+        cell = summary_sheet.cell(16, column, header)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(wrap_text=True)
+    context = report["Market Context"].fillna("").astype(str).str.strip()
+    regimes = ("Bull Market", "Bear Market", "Choppy Market")
+    for row_number, regime in enumerate((*regimes, "Unknown"), start=17):
+        subset = report[context == regime] if regime in regimes else report[~context.isin(regimes)]
+        returns = pd.to_numeric(subset["Performance %"], errors="coerce")
+        returns = returns.where(returns.abs() < float("inf"))
+        closed_returns = returns[subset["Status"] == "Full exit"].dropna()
+        statuses = subset["Status"]
+        wins = int((closed_returns > 0).sum())
+        values = [
+            regime, len(subset), int((statuses == "Trade open").sum()),
+            int((statuses == "Partial exit").sum()), int((statuses == "Full exit").sum()),
+            wins, int((closed_returns < 0).sum()), int((closed_returns == 0).sum()),
+            f"{wins / len(closed_returns) * 100:.2f}%" if len(closed_returns) else "NA",
+            f"{returns.mean():+.2f}%" if returns.notna().any() else "NA",
+            int((~statuses.isin(("Trade open", "Partial exit", "Full exit"))).sum()),
+            len(closed_returns),
+        ]
+        for column, value in enumerate(values, start=1):
+            summary_sheet.cell(row_number, column, value)
+    summary_sheet.cell(22, 1, "Win rate uses full exits with numeric returns; breakeven is in the denominator.")
+    summary_sheet.cell(23, 1, "Mean performance includes open and partial trades; returns are not portfolio P&L.")
+    for column in ("F", "G", "H", "I", "J", "K", "L"):
+        summary_sheet.column_dimensions[column].width = 23
 
     # Weekly detail sections. Alert IDs stay in the CSV but are intentionally
     # not included in the shared workbook.
@@ -147,6 +187,7 @@ def _write_excel(frame):
         "A": 8, "B": 20, "C": 18, "D": 13, "E": 14, "F": 15,
         "G": 13, "H": 13, "I": 13, "J": 14, "K": 28, "L": 13,
         "M": 18, "N": 18, "O": 18, "P": 36,
+        "Q": 24, "R": 26,
     }
     for column, width in widths.items():
         detail_sheet.column_dimensions[column].width = width
@@ -487,8 +528,18 @@ def _evaluate_alert(alert, key):
 
 def run():
     previous_records = _read_existing()
+    signal_history = SignalHistory(SIGNAL_HISTORY_FILE)
+    current_alerts = _read_current_alerts()
+    for alert in current_alerts:
+        if pd.isna(pd.to_datetime(alert["Date Time"], errors="coerce")):
+            print(f"[{alert['Ticker Name']}] invalid alert time; signal counts unavailable for this event.")
+            continue
+        signal_history.extend([{
+            "symbol": alert["Ticker Name"], "alert_time_ist": alert["Date Time"],
+            "alert_type": alert.get("Alert Type") or "BUY",
+        }])
     records = dict(previous_records)
-    for alert in _read_current_alerts():
+    for alert in current_alerts:
         previous = records.get(alert["Alert ID"], {})
         alert["Sector"] = (
             known_sector(alert.get("Sector"))
@@ -514,6 +565,20 @@ def run():
     )
     for alert in entries:
         alert["Sector"] = resolve_sector(alert["Ticker Name"], alert.get("Sector"))
+        entry_time = pd.to_datetime(alert.get("Date Time"), errors="coerce")
+        if pd.notna(entry_time):
+            entry_time = (
+                entry_time.tz_localize(IST) if entry_time.tzinfo is None
+                else entry_time.tz_convert(IST)
+            )
+            today_count, rolling_count = signal_history.counts(alert["Ticker Name"], entry_time.date())
+            # Old first-entry rows cannot reconstruct all historical signal events.
+            if today_count:
+                alert["Signals On Entry Day"] = today_count
+                alert["Signals In Last 7 Days"] = rolling_count
+            else:
+                alert.setdefault("Signals On Entry Day", "NA")
+                alert.setdefault("Signals In Last 7 Days", "NA")
         key = key_by_symbol.get(alert["Ticker Name"])
         if not key:
             output.append({**alert, "Status": "NO INSTRUMENT"})

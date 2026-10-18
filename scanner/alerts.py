@@ -82,18 +82,24 @@ def _send_text(chat_id, chunks, chart_symbol=None):
 # Telegram limits: ~1 msg/s per private chat, 20 msgs/min per group, ~30 msgs/s per bot.
 PRIVATE_CHAT_INTERVAL = 1.1
 GROUP_CHAT_INTERVAL = 3.1
-MAX_RETRY_AFTER = 60
+BOT_SEND_INTERVAL = 1 / 25
 _last_sent = {}
+_last_bot_sent = 0.0
 _send_lock = Lock()
 
 
 def _throttle(chat_id):
+    global _last_bot_sent
     interval = GROUP_CHAT_INTERVAL if str(chat_id).startswith("-") else PRIVATE_CHAT_INTERVAL
     with _send_lock:
-        wait = _last_sent.get(chat_id, 0) + interval - time.monotonic()
+        wait = max(
+            _last_sent.get(chat_id, 0) + interval,
+            _last_bot_sent + BOT_SEND_INTERVAL,
+        ) - time.monotonic()
         if wait > 0:
             time.sleep(wait)
         _last_sent[chat_id] = time.monotonic()
+        _last_bot_sent = _last_sent[chat_id]
 
 
 def _post(method, chat_id, attempts=3, **kwargs):
@@ -103,7 +109,7 @@ def _post(method, chat_id, attempts=3, **kwargs):
         _throttle(chat_id)
         try:
             response = requests.post(url, **kwargs)
-        except Exception as exc:
+        except requests.RequestException as exc:
             print(f"Telegram {method} failed for chat_id={chat_id} (attempt {attempt}): {exc}")
             time.sleep(2)
             continue
@@ -112,10 +118,11 @@ def _post(method, chat_id, attempts=3, **kwargs):
         if response.status_code == 429:
             try:
                 retry_after = int(response.json().get("parameters", {}).get("retry_after", 5))
-            except Exception:
+            except (ValueError, TypeError, AttributeError):
                 retry_after = 5
+            retry_after = max(1, retry_after)
             print(f"Telegram rate limit for chat_id={chat_id}; retrying in {retry_after}s.")
-            time.sleep(min(retry_after, MAX_RETRY_AFTER))
+            time.sleep(retry_after)
             continue
         if response.status_code >= 500:
             print(f"Telegram {method} server error for chat_id={chat_id}: HTTP {response.status_code}")
@@ -123,37 +130,38 @@ def _post(method, chat_id, attempts=3, **kwargs):
             continue
         print(f"Telegram {method} failed for chat_id={chat_id}: HTTP {response.status_code} | {response.text}")
         return False
+    print(f"Telegram {method} delivery exhausted {attempts} attempts for chat_id={chat_id}.")
     return False
 
 
 def send_document(path, caption=None):
     """Send a local file to every configured Telegram chat."""
     document = Path(path)
+    caption = str(caption or "")
     if not settings.TELEGRAM_BOT_TOKEN or not settings.TELEGRAM_CHAT_ID:
         print(f"Telegram document ready: {document}")
         if caption:
             print(caption)
         return
 
+    try:
+        document_bytes = document.read_bytes()
+    except OSError as exc:
+        print(f"Telegram document read failed for {document}: {exc}")
+        return
+    fits = _text_length(caption) <= TELEGRAM_CAPTION_LIMIT
     for chat_id in _chat_ids():
-        try:
-            with document.open("rb") as handle:
-                response = requests.post(
-                    f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/sendDocument",
-                    data={"chat_id": chat_id, "caption": str(caption or "")},
-                    files={
-                        "document": (
-                            document.name,
-                            handle,
-                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        )
-                    },
-                    timeout=60,
-                )
-            if not response.ok:
-                print(f"Telegram document send failed for chat_id={chat_id}: HTTP {response.status_code} | {response.text}")
-        except Exception as exc:
-            print(f"Telegram document send failed for chat_id={chat_id}: {exc}")
+        delivered = _post(
+            "sendDocument", chat_id,
+            data={"chat_id": chat_id, "caption": caption if fits else ""},
+            files={"document": (
+                document.name, document_bytes,
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )},
+            timeout=60,
+        )
+        if caption and (not fits or not delivered):
+            _send_text(chat_id, _text_chunks(caption))
 
 
 TELEGRAM_CAPTION_LIMIT = 1024

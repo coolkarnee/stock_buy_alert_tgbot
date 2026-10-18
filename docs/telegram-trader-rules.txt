@@ -92,13 +92,36 @@ COMMON NOTES
   per monitoring run.
 - Every stock alert includes Sector; unavailable data
   appears as NA and does not block the signal.
+- Live BUY alerts show signal counts for today and the last
+  7 calendar days (IST), including the current alert.
+  EP, Momentum and every radar timeframe count separately
+  toward the same stock's combined total.
+- These counts measure recorded signals, not guaranteed
+  Telegram deliveries or a proven increase in win probability.
+  History starts when tracking is deployed; older events may
+  be unavailable.
 - Turnover is the scanner's historical-average liquidity
   measure including today's developing data - not a
   requirement for Rs 20 Cr to have traded today alone.
 - Performance uses the first recorded alert price/time
   per stock per trading day. Later signals do not replace it.
 - End-of-day sector counts include all signal events.
+- Swing CSV and Excel keep Sector as a separate column and
+  include recorded entry-day and rolling 7-day signal counts.
+- The Excel Dashboard groups outcomes by entry market:
+  Bull, Bear, Choppy, or Unknown. Win/loss/breakeven and
+  win rate use fully exited trades with usable returns only.
+  Open/partial counts and all-trade average returns are
+  shown separately; averages are not portfolio P&L.
 - Previous trading day's low is shown as the initial stop.
 - Data/provider delays can delay alerts.
+- Broker API requests are paced to stay within per-process
+  quotas. Large watchlists can delay startup and candle scans.
+  Do not run multiple scanners/reports on the same broker
+  account at once; their separate quotas are not coordinated.
+- Long Telegram messages split automatically without losing
+  signal details. Long image/document captions follow as text.
+  Rate limits may delay delivery; network failures can still
+  prevent it.
 - Restarting the monitor can repeat same-day signals.
 - Alerts do not place orders or guarantee returns.

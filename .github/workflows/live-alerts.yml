@@ -42,20 +42,20 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
-      - name: Commit market breadth history
+      - name: Commit market breadth and signal history
         if: ${{ always() }}
         run: |
-          if [ ! -f artifacts/market_breadth.csv ]; then
-            echo "No market breadth history to commit."
-            exit 0
-          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add artifacts/market_breadth.csv
+          for file in artifacts/market_breadth.csv artifacts/signal_history.csv; do
+            if [ -f "$file" ]; then
+              git add "$file"
+            fi
+          done
           if git diff --cached --quiet; then
-            echo "No market breadth changes to commit."
+            echo "No market breadth or signal history changes to commit."
           else
-            git commit -m "Update market breadth history"
+            git commit -m "Update market breadth and signal history"
             git pull --rebase origin "${GITHUB_REF_NAME}"
             git push origin "HEAD:${GITHUB_REF_NAME}"
           fi

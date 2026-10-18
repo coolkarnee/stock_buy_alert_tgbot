@@ -2,47 +2,77 @@ import gzip,json,time,requests,pandas as pd
 from datetime import date,timedelta
 from concurrent.futures import ThreadPoolExecutor,as_completed
 from threading import Lock
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from config import settings
 
 BASE='https://api.upstox.com'
 RETRY_STATUS={429,500,502,503,504}
 
 class RateLimiter:
-    def __init__(self,per_minute):
-        self.interval=60.0/per_minute
+    def __init__(self,per_minute,per_second=None,per_30_minutes=None):
+        per_second = settings.UPSTOX_REQUESTS_PER_SECOND if per_second is None else per_second
+        per_30_minutes = settings.UPSTOX_REQUESTS_PER_30_MINUTES if per_30_minutes is None else per_30_minutes
+        if not (0 < per_second <= 10 and 0 < per_minute <= 500 and 0 < per_30_minutes <= 2000):
+            raise ValueError("Upstox budgets must be positive and within 10/s, 500/min, 2000/30min.")
+        self.interval=max(1.0/per_second,60.0/per_minute,1800.0/per_30_minutes)
         self.lock=Lock()
         self.next_time=0.0
+        self.blocked_until=0.0
 
     def wait(self):
-        with self.lock:
-            now=time.monotonic()
-            if now<self.next_time:
-                time.sleep(self.next_time-now)
+        while True:
+            with self.lock:
                 now=time.monotonic()
-            self.next_time=now+self.interval
+                delay=max(self.next_time,self.blocked_until)-now
+                if delay<=0:
+                    self.next_time=now+self.interval
+                    return
+            time.sleep(delay)
+
+    def cooldown(self,seconds):
+        with self.lock:
+            self.blocked_until=max(self.blocked_until,time.monotonic()+seconds)
 
 rate_limiter=RateLimiter(settings.UPSTOX_REQUESTS_PER_MINUTE)
+
+def _retry_delay(value):
+    if not value:
+        return 2.0
+    try:
+        delay=float(value)
+    except ValueError:
+        try:
+            retry_date=parsedate_to_datetime(value)
+            delay=(retry_date-datetime.now(timezone.utc)).total_seconds()
+        except (TypeError,ValueError,OverflowError):
+            print(f"Invalid Upstox Retry-After {value!r}; using 2 seconds.")
+            return 2.0
+    if not 0 <= delay < float("inf"):
+        print(f"Invalid Upstox Retry-After {value!r}; using 2 seconds.")
+        return 2.0
+    return delay
 
 def headers():
     if not settings.UPSTOX_ACCESS_TOKEN:
         raise RuntimeError('UPSTOX_ACCESS_TOKEN is not configured.')
     return {'Authorization':f'Bearer {settings.UPSTOX_ACCESS_TOKEN}','Accept':'application/json'}
 
-def _request_json(url,timeout=None,retries=None):
+def _request_json(url,timeout=None,retries=None,params=None):
     timeout=timeout or settings.UPSTOX_REQUEST_TIMEOUT
     retries=settings.UPSTOX_MAX_RETRIES if retries is None else retries
     last=None
     for attempt in range(retries+1):
         rate_limiter.wait()
         try:
-            r=requests.get(url,headers=headers(),timeout=timeout)
+            r=requests.get(url,headers=headers(),timeout=timeout,params=params)
             if r.status_code in RETRY_STATUS:
                 last=RuntimeError(f'HTTP {r.status_code}')
+                delay=_retry_delay(r.headers.get('Retry-After'))
+                rate_limiter.cooldown(delay)
+                print(f"Upstox HTTP {r.status_code}; shared request cooldown {delay:.1f}s (attempt {attempt+1}).")
                 if attempt>=retries:
                     raise last
-                retry_after=r.headers.get('Retry-After')
-                delay=float(retry_after) if retry_after else 2.0
-                time.sleep(min(delay,5.0))
                 continue
             r.raise_for_status()
             return r.json()

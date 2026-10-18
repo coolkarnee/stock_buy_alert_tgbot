@@ -399,7 +399,9 @@ class MomentumTests(unittest.TestCase):
         def advance(seconds):
             Clock.current += timedelta(hours=2)
 
-        with (patch.object(live_monitor, "datetime", Clock),
+        with (TemporaryDirectory() as history_directory,
+              patch.object(live_monitor, "SIGNAL_HISTORY_FILE", Path(history_directory) / "history.csv"),
+              patch.object(live_monitor, "datetime", Clock),
               patch.object(live_engine, "datetime", Clock),
               patch.object(live_monitor.time, "sleep", side_effect=advance),
               patch.object(live_monitor, "ThreadPoolExecutor", ImmediateExecutor),
@@ -461,6 +463,7 @@ class MomentumTests(unittest.TestCase):
                   patch.object(live_engine, "datetime", Clock),
                   patch.object(live_monitor.time, "sleep", side_effect=advance),
                   patch.object(live_monitor, "Path", return_value=alert_log),
+                  patch.object(live_monitor, "SIGNAL_HISTORY_FILE", Path(directory) / "history.csv"),
                   patch.object(live_monitor, "ThreadPoolExecutor", ImmediateExecutor),
                   patch.object(live_monitor, "load_nse_equities", return_value=universe),
                   patch.object(live_monitor, "load_instruments", return_value=[]),

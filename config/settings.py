@@ -35,9 +35,11 @@ ORIGINAL_VCP_VOLUME_RATIO=1.0
 
 MAX_UNIVERSE=1500
 
-# Upstox standard APIs currently allow up to 500 requests/minute
-# and 2,000 requests/30 minutes. Keep a safety margin.
-UPSTOX_REQUESTS_PER_MINUTE=450
+# Upstox standard limits: 10/s, 500/min, 2,000/30min.
+# Smooth requests against the tightest budget, including retries.
+UPSTOX_REQUESTS_PER_SECOND=8
+UPSTOX_REQUESTS_PER_MINUTE=480
+UPSTOX_REQUESTS_PER_30_MINUTES=1950
 UPSTOX_MAX_WORKERS=8
 UPSTOX_REQUEST_TIMEOUT=15
 UPSTOX_MAX_RETRIES=1

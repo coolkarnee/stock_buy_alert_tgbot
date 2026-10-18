@@ -247,10 +247,12 @@ class EpRadarTests(unittest.TestCase):
 
         class Clock(datetime):
             current = start
+            reads = 0
 
             @classmethod
             def now(cls, timezone=None):
-                return cls.current
+                cls.reads += 1
+                return cls.current + timedelta(microseconds=cls.reads)
 
         class Executor:
             def __init__(self, **kwargs):
@@ -277,6 +279,7 @@ class EpRadarTests(unittest.TestCase):
                   patch.object(live_monitor.time, "sleep", side_effect=advance),
                   patch.object(live_monitor.time, "monotonic", side_effect=lambda: Clock.current.timestamp()),
                   patch.object(live_monitor, "Path", return_value=log),
+                  patch.object(live_monitor, "SIGNAL_HISTORY_FILE", Path(directory) / "history.csv"),
                   patch.object(live_monitor, "ThreadPoolExecutor", Executor),
                   patch.object(live_monitor, "load_nse_equities", return_value=universe),
                   patch.object(live_monitor, "load_instruments", return_value=[]),
@@ -296,6 +299,9 @@ class EpRadarTests(unittest.TestCase):
                 messages = [call.args[0] for call in send.call_args_list]
             with log.open(newline="", encoding="utf-8") as handle:
                 rows = list(csv.DictReader(handle))
+            history = live_monitor.SignalHistory(Path(directory) / "history.csv")
+            history.extend(rows)
+            self.assertEqual(len(history.events), len(rows))
         return rows, messages
 
     def test_monitor_spot_mode_delivers_each_range_once_without_breakout_close(self):
@@ -315,6 +321,9 @@ class EpRadarTests(unittest.TestCase):
         self.assertEqual(sum("EP RADAR ORB BUY" in text for text in messages), 5)
         self.assertTrue(all(row["alert_price"] == "110.00" for row in rows))
         self.assertTrue(all(row["sector"] == "Refineries" for row in rows))
+        radar = [text for text in messages if "EP RADAR ORB BUY" in text]
+        for count, text in enumerate(radar, start=1):
+            self.assertIn(f"Signal frequency: {count} today | {count} in last 7 days", text)
 
     def test_ep_momentum_and_radar_alerts_remain_independent_and_first_ep_is_entry(self):
         rows, messages = self.run_monitor(gap_only=False)

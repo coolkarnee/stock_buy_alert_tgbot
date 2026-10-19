@@ -349,8 +349,6 @@ def run():
     if not states:
         raise RuntimeError("No symbols have completed historical data for live monitoring.")
 
-    print(f"NSE live scanner started; monitoring {len(states)} symbols.")
-
     configuration = upstox_client.Configuration()
     configuration.access_token = settings.UPSTOX_ACCESS_TOKEN
     client = upstox_client.ApiClient(configuration)
@@ -374,9 +372,17 @@ def run():
     market_context = {"above_ema": None, "regime": "Choppy Market"}
     last_log = 0.0
     open_summary_sent = False
+    start_notification_sent = False
 
     def on_open():
+        nonlocal start_notification_sent
         print(f"WebSocket connected; subscribed to {len(keys)} instruments.")
+        if not start_notification_sent:
+            start_notification_sent = True
+            send(
+                f"\U0001f7e2 NSE LIVE SCANNER STARTED. Monitoring {len(states)} symbols via Upstox WebSocket.\n"
+                "No orders will be placed."
+            )
 
     def on_error(message):
         print(f"WebSocket error: {message}")
@@ -423,10 +429,9 @@ def run():
     streamer.on("close", on_close)
 
     start, end = market_open_close()
-    while datetime.now(IST) < start:
-        time.sleep(5)
-
     try:
+        while datetime.now(IST) < start:
+            time.sleep(5)
         streamer.connect()
         while datetime.now(IST) < end:
             for instrument_key, future in list(pending.items()):
@@ -604,9 +609,15 @@ def run():
                 last_log = now
                 print(f"Heartbeat {datetime.now(IST).strftime('%H:%M:%S')} | buy alerts={len(sent_buy)} | EP alerts={len(sent_ep)} | pending candles={len(pending)}")
             time.sleep(1)
+    except KeyboardInterrupt:
+        print("Scanner stop requested; closing the session gracefully.")
     finally:
-        pool.shutdown(wait=True, cancel_futures=True)
         try:
+            try:
+                streamer.disconnect()
+            except Exception as exc:
+                print(f"WebSocket disconnect failed: {exc}")
+            pool.shutdown(wait=True, cancel_futures=True)
             if open_summary_sent:
                 send(
                     market_summary(
@@ -619,10 +630,7 @@ def run():
             else:
                 print("NSE live scanner stopped before a complete market summary was available.")
         finally:
-            try:
-                streamer.disconnect()
-            except Exception:
-                pass
+            send("\U0001f534 NSE LIVE SCANNER STOPPED for the session.")
 
 if __name__ == "__main__":
     run()

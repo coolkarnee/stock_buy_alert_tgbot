@@ -64,6 +64,5 @@ class SignalHistory:
                 writer.writerow(self.events[-1])
         today, rolling = self.counts(symbol, _timestamp(timestamp.isoformat()).date())
         return (
-            f"\nSignal frequency: {today} today | {rolling} in last 7 days "
-            "(all live signal types, including this alert)."
+            f"\nAlert History: {today} today | {rolling} in last 7 days"
         )

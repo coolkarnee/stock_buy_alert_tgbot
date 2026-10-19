@@ -323,7 +323,7 @@ class EpRadarTests(unittest.TestCase):
         self.assertTrue(all(row["sector"] == "Refineries" for row in rows))
         radar = [text for text in messages if "EP RADAR ORB BUY" in text]
         for count, text in enumerate(radar, start=1):
-            self.assertIn(f"Signal frequency: {count} today | {count} in last 7 days", text)
+            self.assertIn(f"Alert History: {count} today | {count} in last 7 days", text)
 
     def test_ep_momentum_and_radar_alerts_remain_independent_and_first_ep_is_entry(self):
         rows, messages = self.run_monitor(gap_only=False)

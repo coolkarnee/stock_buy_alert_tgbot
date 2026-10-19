@@ -353,7 +353,7 @@ The live alert CSV appends a `sector` column so downstream reports preserve the 
 
 ### Signal-frequency context
 
-Every live EP, Momentum, and EP-radar BUY message appends a line such as `Signal frequency: 2 today | 3 in last 7 days (all live signal types, including this alert).` Counts combine all live signal types for the same stock, including each radar timeframe separately. "Last 7 days" means the current IST calendar date plus the preceding six dates, not Monday-to-Sunday or seven trading sessions. The current signal is included; events for other stocks and future dates are excluded. Batch scan alerts and swing exit notifications are not included.
+Every live EP, Momentum, and EP-radar BUY message appends a line such as `Alert History: 2 today | 3 in last 7 days`. Counts combine all live signal types for the same stock, including each radar timeframe separately. "Last 7 days" means the current IST calendar date plus the preceding six dates, not Monday-to-Sunday or seven trading sessions. The current signal is included; events for other stocks and future dates are excluded. Batch scan alerts and swing exit notifications are not included.
 
 `scanner/signal_history.py` maintains `artifacts/signal_history.csv` separately from the first-entry trade history. The live workflow commits this history alongside market breadth even when the scanner times out, provided the save step completes successfully. Later runs on that branch load it before counting; restarting still does not suppress an otherwise eligible repeat. Counts describe recorded signal events, not independently verified Telegram deliveries or a statistical increase in win probability.
 

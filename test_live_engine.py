@@ -11,6 +11,8 @@ import pandas as pd
 import live_monitor
 from config import settings
 from scanner import live_data, live_engine
+from scanner.market_context import classify_nifty500, market_context
+from scanner.alerts import format_result
 from scanner.alerts import tradingview_chart_url
 
 
@@ -43,6 +45,42 @@ class MomentumTests(unittest.TestCase):
         self.clock = patch.object(live_engine, "_market_minutes", return_value=(30, None, None))
         self.clock.start()
         self.addCleanup(self.clock.stop)
+
+    def test_nifty_context_requires_price_and_both_emas_to_agree_with_slope(self):
+        rising = {"ema10": 100.0, "ema20": 98.0, "prev_ema10": 99.0, "prev_ema20": 97.0}
+        falling = {"ema10": 100.0, "ema20": 102.0, "prev_ema10": 101.0, "prev_ema20": 103.0}
+        self.assertEqual(classify_nifty500(rising, 110.0)[0], "Uptrending")
+        self.assertEqual(classify_nifty500(falling, 90.0)[0], "Downtrending")
+        self.assertEqual(classify_nifty500(rising, 99.0)[0], "Chopping")
+        self.assertEqual(classify_nifty500(None, 110.0)[0], "NA")
+
+    def test_combined_market_context_uses_breadth_thresholds_and_na(self):
+        category, text = market_context("Uptrending", 50.1, "2026-10-19")
+        self.assertEqual(category, "Bull Market")
+        self.assertIn("Stocks above 200 MA: 50.1%", text)
+        self.assertIn("Stocks above 200 MA", text)
+
+        category, text = market_context("Downtrending", 50.0)
+        self.assertEqual(category, "Bear Market")
+        self.assertIn("50.0% below 200 MA", text)
+
+        category, text = market_context("Uptrending", 50.0)
+        self.assertEqual(category, "Mixed Market")
+        self.assertIn("Broader Bear", text)
+        self.assertEqual(market_context("Chopping", 60.0)[0], "Mixed Market")
+
+        self.assertIn("Oversold", market_context("Chopping", 20.0)[1])
+        self.assertIn("Overbought", market_context("Chopping", 80.0)[1])
+        category, text = market_context("NA", None)
+        self.assertEqual(category, "NA")
+        self.assertIn("NIFTY 500: NA", text)
+        self.assertIn("Stocks above 200 MA: NA", text)
+        _, text = market_context("Uptrending", None)
+        self.assertIn("NIFTY 500: Uptrending", text)
+        self.assertIn("Stocks above 200 MA: NA", text)
+        _, text = market_context("NA", 61.2)
+        self.assertIn("NIFTY 500: NA", text)
+        self.assertIn("Stocks above 200 MA: 61.2%", text)
 
     def test_all_conditions_buy_without_dry_up(self):
         result = live_engine.evaluate(self.state, self.quote)
@@ -263,16 +301,16 @@ class MomentumTests(unittest.TestCase):
                 live_engine.update_intraday(self.state, candles, self.ep_start + timedelta(minutes=2))
                 self.assertIsNone(self.state["ep_quote"])
 
-    def test_ep_keeps_existing_trend_atr_price_and_liquidity_filters(self):
+    def test_ep_keeps_existing_trend_price_and_liquidity_filters(self):
         live_engine.update_intraday(self.state, self.ep_candles, self.ep_start + timedelta(minutes=1))
         self.assertTrue(live_engine.evaluate(self.state, self.state["ep_quote"])["episodic_pivot"])
         below_ema = dict(self.state, ema21=200.0)
         self.assertFalse(live_engine.evaluate(below_ema, below_ema["ep_quote"])["episodic_pivot"])
-        for setting, threshold in (
-            ("MIN_ATR_PCT", 100.0),
-            ("MIN_PRICE", 110.0),
-            ("MIN_TURNOVER_CR", 100.0),
-        ):
+        with patch.object(settings, "EP_MIN_ATR_PCT", 100.0):
+            self.assertFalse(live_engine.evaluate(self.state, self.state["ep_quote"])["episodic_pivot"])
+        with patch.object(settings, "MIN_ATR_PCT", 100.0):
+            self.assertTrue(live_engine.evaluate(self.state, self.state["ep_quote"])["episodic_pivot"])
+        for setting, threshold in (("MIN_PRICE", 110.0), ("MIN_TURNOVER_CR", 100.0)):
             with self.subTest(setting=setting), patch.object(settings, setting, threshold):
                 self.assertFalse(live_engine.evaluate(self.state, self.state["ep_quote"])["episodic_pivot"])
 
@@ -321,14 +359,16 @@ class MomentumTests(unittest.TestCase):
 
     def test_v3_feed_parsing_and_alert_format(self):
         feed = {"fullFeed": {"marketFullFeed": {
-            "ltpc": {"ltp": 110, "ltt": "12345"}, "vtt": "4000000",
+            "ltpc": {"ltp": 110, "ltt": "12345", "iep": 105.5}, "vtt": "4000000",
             "marketOHLC": {"ohlc": [{"interval": "1d", "open": 100, "high": 110, "low": 100}]},
         }}}
         quote = live_monitor.extract_quote(feed)
         self.assertEqual(quote["last_price"], 110)
+        self.assertEqual(quote["iep"], 105.5)
         self.assertEqual(quote["volume"], 4000000)
         result = live_engine.evaluate(self.state, quote)
         self.assertTrue(result["buy"])
+        result["market_context"] = market_context("Uptrending", 62.5, "2026-10-19")[1]
         message = live_monitor.fmt_alert("BUY", result)
         self.assertIn("MOMENTUM BUY", message)
         self.assertIn("ORB close: 3m", message)
@@ -344,6 +384,25 @@ class MomentumTests(unittest.TestCase):
         self.assertNotIn("warning only", message)
         self.assertNotIn("Live scanner only", message)
         self.assertIn("NIFTY 500", message)
+        self.assertIn("Market Context: Bull Market", message)
+        self.assertIn("NIFTY 500: Uptrending", message)
+        self.assertIn("Stocks above 200 MA: 62.5%", message)
+        self.assertIn("Stocks above 200 MA: 62.5%", live_monitor.fmt_alert("EP", result))
+        batch_result = {
+            **result, "score": 6, "pivot": 105.0, "rs20": 1.5,
+            "from_52w_high": 10.0, "swing_return": 20.0, "vcp": True,
+            "vcp_breakout": True,
+        }
+        self.assertIn("Stocks above 200 MA: 62.5%", format_result(batch_result, "BUY"))
+        radar_state = {
+            "symbol": "TEST", "ep_radar_open": 106.0, "prev_close": 100.0,
+            "sector": "Refineries", "prev_low": 95.0,
+            "market_context": result["market_context"],
+        }
+        radar_message = live_monitor.fmt_ep_orb_alert(radar_state, 3, {
+            "price": 111.0, "range_high": 110.0, "orb_mode": "close",
+        })
+        self.assertIn("Stocks above 200 MA: 62.5%", radar_message)
         result["sector"] = "Specialty Chemicals"
         for kind in ("BUY", "EP"):
             self.assertIn("Sector: Specialty Chemicals", live_monitor.fmt_alert(kind, result))
@@ -475,7 +534,12 @@ class MomentumTests(unittest.TestCase):
                                side_effect=lambda message, **kwargs: delivered.append((Clock.current, message)))):
                 callbacks = {}
                 streamer.return_value.on.side_effect = lambda event, callback: callbacks.update({event: callback})
-                streamer.return_value.connect.side_effect = lambda: callbacks["message"](feed)
+                def connect():
+                    callbacks["message"](feed)
+                    Clock.current = start
+                    callbacks["message"](feed)
+
+                streamer.return_value.connect.side_effect = connect
                 live_monitor.run()
                 intraday.assert_called_once_with("NSE_EQ|TEST")
                 streamer.return_value.disconnect.assert_called_once()
@@ -491,6 +555,74 @@ class MomentumTests(unittest.TestCase):
             self.assertEqual([row["alert_type"] for row in rows], ["EP"])
             self.assertEqual(rows[0]["sector"], "Specialty Chemicals")
             self.sector_lookup.assert_called_once_with("TEST")
+
+    def test_monitor_confirms_preopen_ep_candidate_after_open(self):
+        start = self.ep_start
+        universe = pd.DataFrame([{"instrument_key": "NSE_EQ|TEST", "trading_symbol": "TEST"}])
+        preopen_feed = {"feeds": {"NSE_EQ|TEST": {"fullFeed": {"marketFullFeed": {
+            "ltpc": {"ltp": 100, "iep": 110},
+        }}}}}
+        regular_feed = {"feeds": {"NSE_EQ|TEST": {"fullFeed": {"marketFullFeed": {
+            "ltpc": {"ltp": 110}, "vtt": 4000000,
+            "marketOHLC": {"ohlc": [{"interval": "1d", "open": 105, "high": 110, "low": 105}]},
+        }}}}}
+
+        class Clock(datetime):
+            current = start - timedelta(minutes=20)
+
+            @classmethod
+            def now(cls, timezone=None):
+                return cls.current
+
+        class ImmediateExecutor:
+            def __init__(self, **kwargs):
+                pass
+
+            def submit(self, function, *args):
+                future = Future()
+                future.set_result(function(*args))
+                return future
+
+            def shutdown(self, **kwargs):
+                pass
+
+        def connect():
+            callbacks["message"](preopen_feed)
+            Clock.current = start
+            callbacks["message"](regular_feed)
+
+        def advance(seconds):
+            if Clock.current < start.replace(hour=9, minute=0):
+                Clock.current = start.replace(hour=9, minute=0)
+            else:
+                Clock.current = start.replace(hour=15, minute=20)
+
+        delivered = []
+        with TemporaryDirectory() as directory:
+            with (patch.object(live_monitor, "datetime", Clock),
+                  patch.object(live_engine, "datetime", Clock),
+                  patch.object(live_monitor.time, "sleep", side_effect=advance),
+                  patch.object(live_monitor, "Path", return_value=Path(directory) / "live_alerts.csv"),
+                  patch.object(live_monitor, "SIGNAL_HISTORY_FILE", Path(directory) / "history.csv"),
+                  patch.object(live_monitor, "ThreadPoolExecutor", ImmediateExecutor),
+                  patch.object(live_monitor, "load_nse_equities", return_value=universe),
+                  patch.object(live_monitor, "load_instruments", return_value=[]),
+                  patch.object(live_monitor, "historical_many",
+                               return_value={"NSE_EQ|TEST": ("TEST", self.history, None)}),
+                  patch.object(live_monitor, "intraday_minutes", return_value=self.ep_candles),
+                  patch.object(live_monitor.upstox_client, "MarketDataStreamerV3") as streamer,
+                  patch.object(live_monitor, "send",
+                               side_effect=lambda message, **kwargs: delivered.append((Clock.current, message)))):
+                callbacks = {}
+                streamer.return_value.on.side_effect = lambda event, callback: callbacks.update({event: callback})
+                streamer.return_value.connect.side_effect = connect
+                live_monitor.run()
+
+        ep_alerts = [(when, message) for when, message in delivered
+                     if "EPISODIC PIVOT BUY - TEST" in message]
+        self.assertEqual(len(ep_alerts), 1, delivered)
+        self.assertEqual(ep_alerts[0][0], start)
+        self.assertIn("Gap +5.00%", ep_alerts[0][1])
 
 
 if __name__ == "__main__":

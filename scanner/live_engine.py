@@ -399,7 +399,7 @@ def evaluate(state, quote):
         day_open > state["prev_close"] * (1 + settings.EP_MIN_GAP_PCT / 100) and
         price > current_ema21 and
         price > settings.MIN_PRICE and
-        (state["is_ipo"] or atr_pct > settings.MIN_ATR_PCT) and
+        (state["is_ipo"] or atr_pct > settings.EP_MIN_ATR_PCT) and
         liquidity_condition
     )
     return {

@@ -163,7 +163,7 @@ class EpRadarTests(unittest.TestCase):
         text = live_monitor.fmt_ep_orb_alert(self.state, 3, self.state["ep_orb_breakouts"][3])
         self.assertIn("Breakout Close Rs 110.00", text)
         self.assertIn("ORB confirmation: close", text)
-        self.assertIn("1m candle start:", text)
+        self.assertNotIn("1m candle start:", text)
 
     def test_spot_mode_waits_for_completed_range_and_verified_gap(self):
         with patch.object(settings, "OPENING_RANGE_BREAKOUT_MODE", "spot"):

@@ -455,7 +455,7 @@ def _send_with_chart(text, render, *args):
 
 
 def send_breadth_alerts(today):
-    """Send the three TradingView breadth alerts as separate chart + text messages."""
+    """Send the three TradingView breadth alerts and return the MA percentages."""
     data, error = scrape_tradingview_breadth()
     date_text = today.strftime("%d %b %Y")
 
@@ -478,3 +478,4 @@ def send_breadth_alerts(today):
         _send_with_chart(ma_text, render_moving_averages, values, history, date_text)
     else:
         send(ma_text)
+    return values

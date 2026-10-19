@@ -9,7 +9,7 @@ This repository is an alert-only scanner. It does not place orders or manage pos
 | Entry point | Behavior |
 | --- | --- |
 | `main.py` | Downloads the current universe and about two years of daily history, evaluates each stock, prints a scan summary, sends Telegram alerts for BUY results, and writes `scan_results.csv` if there are results or per-symbol failures to report. |
-| `live_monitor.py` | Builds historical reference state, sends a six-index summary and three TradingView India market-breadth alerts (advancing/declining, new highs/lows, above MAs; chart image + text) 20 minutes after market open, connects to the Upstox V3 full-market WebSocket, evaluates live quotes each second, sends a final market-close summary, and independently sends Momentum BUY, Episodic Pivot BUY, and gap-only EP-radar opening-range alerts. |
+| `live_monitor.py` | Builds historical reference state, connects to the Upstox V3 full-market WebSocket at 09:00 IST for pre-open EP gap candidates, confirms them with regular-session quotes, evaluates Momentum BUY and EP-radar opening-range alerts, sends the delayed market/breadth summaries, and sends a final market-close summary. |
 | `performance.py` | Reads the live alert CSV, fetches the day's close and post-alert intraday high, sends a Telegram summary followed by an sector alert-count breakdown, writes `performance.csv`, and saves a concise conclusion for the next market-open summary. |
 | `swing_performance.py` | Recomputes the persistent swing-performance sheet for every live alert until the first daily SL/EMA break. |
 | `test_live_engine.py` | Offline automated tests for momentum rules, IPO exemptions, ORB candles, feed parsing, and mocked Telegram dispatch. |
@@ -116,7 +116,7 @@ The universe is rebuilt each run. `scanner/universe.py` collects the union of co
 
 Universe sources are external services, not bundled files. Individual source failures are printed as warnings; loading can continue if another source returns symbols. The run stops if no symbols are collected. Instruments not found in Upstox's instrument master are omitted.
 
-Both scanners fetch approximately two years of daily candles for each eligible stock. Batch scanning uses Nifty 500 as its benchmark and six worker threads, and requires 260 daily bars. Live state preparation uses `UPSTOX_MAX_WORKERS` (default eight), removes candles dated today, and requires at least one completed daily bar. Live market context uses Nifty Smallcap 250 and falls back to Nifty 500 if the Smallcap benchmark lookup or history is unavailable. Failed or empty history requests are skipped.
+Both scanners fetch approximately two years of daily candles for each eligible stock. Batch scanning uses Nifty 500 as its benchmark and six worker threads, and requires 260 daily bars. Live state preparation uses `UPSTOX_MAX_WORKERS` (default eight), removes candles dated today, and requires at least one completed daily bar. BUY-alert context uses the exact NIFTY 500 index and the latest available stocks-above-200-MA breadth. Failed or empty history requests are skipped; unavailable context inputs are shown as NA.
 
 Upstox REST requests share `scanner/upstox.py`'s thread-safe limiter across daily history, intraday candles, quote snapshots, company profiles and IPO pagination, including every retry. Safety budgets are `UPSTOX_REQUESTS_PER_SECOND=8`, `UPSTOX_REQUESTS_PER_MINUTE=480` and `UPSTOX_REQUESTS_PER_30_MINUTES=1950`, below the stated broker ceilings of 10/s, 500/min and 2,000/30min. The limiter spaces calls against the tightest budget: **one request approximately every 0.923 seconds at the defaults** (about 65/min sustained), not 8/s or 480/min sustained. Raising the longer-window budgets reduces safety headroom; 8/s alone does not protect the 30-minute quota. Invalid budgets above those ceilings fail explicitly. Most requests use a 15-second timeout and one transient-error retry; IPO pages retain two retries and a 20-second timeout. HTTP 429/selected 5xx responses set a shared cooldown, honoring numeric or HTTP-date `Retry-After` without the previous five-second cap. Exhausted requests still surface errors.
 
@@ -161,7 +161,7 @@ The unchanged batch BUY signals require every condition below:
 | Momentum | Price above the previous close |
 | Volume confirmation | Relative volume at least 1.30x, or pocket pivot is true |
 | Breakout | Normal breakout or VCP breakout is true |
-| Volatility | ATR-14 at least 3.9% of price |
+| Volatility | ATR-14 at least 3.49% of price |
 | Swing | At least 30% above the 52-week low |
 | Proximity to high | No more than 20% below the 52-week high |
 | Turnover | Price multiplied by volume at least ₹20 crore |
@@ -185,7 +185,7 @@ Live selection does not use VCP or the batch candidate score. Every mandatory co
 | Breakout | Price above the previous-session reference with a 0.50% buffer |
 | Swing strength | Any qualifying period in the table below; IPOs skip this condition |
 | Near high | Within 20% of the 52-week high, or within 15% for IPOs |
-| Volatility | ATR14 >3.9%, except IPOs |
+| Volatility | ATR14 >3.49%, except IPOs |
 | Price | Strictly above ₹20 |
 | Liquidity | Turnover strictly above ₹20 Cr |
 | Opening range | Break at least one completed 3m, 5m, 15m, 30m, or 60m opening range |
@@ -228,7 +228,9 @@ ATR 14d 29.35% | Turnover 50d avg Rs 25.4 Cr
 52W HI -0.00% | 52W LO +57.14%
 Strength: 1W +22.2% (>10%), 1M +25.0% (>19%), 3M +37.5% (>29%)
 ORB close: 3m, 5m | RVOL 1.55x | Pocket Pivot
-NIFTY 500: Bear Market
+Market Context: Bull Market
+NIFTY 500: Uptrending (above EMA10 and EMA20; both rising)
+Stocks above 200 MA: 62.5% (Broader Bull; 37.5% below 200 MA) | as of 2026-10-19
 ```
 
 ```text
@@ -238,7 +240,9 @@ Price Rs 110.00 | Gap +6.00%
 Prev Day Low SL Rs 104.50
 ATR 14d 29.35% | Turnover 50d avg Rs 25.4 Cr
 Perf: 1W +22.2% ✓ | 1M +5.8% | 3M -8.3% | 6M +15.8% | 1Y +120.0% ✓ | 18M +83.3%
-NIFTY 500: Bear Market
+Market Context: Bear Market
+NIFTY 500: Downtrending (below EMA10 and EMA20; both falling)
+Stocks above 200 MA: 42.0% (Broader Bear; 58.0% below 200 MA) | as of 2026-10-19
 ```
 
 ```text
@@ -248,7 +252,9 @@ Price Rs 110.00 | Gap +6.00%
 Prev Day Low SL Rs 104.50
 ATR 4d 7.27% | Turnover 4d avg Rs 29.5 Cr
 Perf: NA (3 sessions)
-NIFTY 500: Bear Market
+Market Context: NA
+NIFTY 500: NA
+Stocks above 200 MA: NA
 ```
 
 ### Previous-day-low risk and position size
@@ -268,19 +274,19 @@ The breakout reference is the lower of yesterday's high and close, with the 0.50
 
 An independent EP alert requires all five conditions below:
 
-- The day's open is strictly more than `EP_MIN_GAP_PCT` above yesterday's close (default **4.5%**, configured in `config/settings.py`).
+- The day's actual open is strictly more than `EP_MIN_GAP_PCT` above yesterday's close (default **4.5%**, configured in `config/settings.py`).
 - Current price is above the developing EMA21.
 - Price is strictly above ₹20.
-- ATR is above 3.9%, except for IPOs.
+- ATR is strictly above `EP_MIN_ATR_PCT` (default **3.0%**), except for IPOs.
 - Turnover/liquidity is above ₹20 Cr.
 
 EP alerts do not require Momentum BUY volume confirmation, momentum, breakout, rally-strength, near-high, or opening-range conditions.
 
 EP BUY and Momentum BUY remain independent: an EP alert never suppresses a qualifying Momentum alert, and Momentum does not require an earlier EP alert. Each is sent at most once per symbol per day within the process.
 
-EP evaluation waits for the actual opening one-minute candle to complete and become available from Upstox's intraday candle API. Completion is determined by the candle timestamp plus its one-minute duration, not a hardcoded 09:16 check. Normally the 09:15 candle becomes eligible around 09:16 IST; provider latency or request queues can delay delivery. Starting the workflow before the open does not skip this check.
+The monitor connects at 09:00 IST and records Upstox's pre-open indicative equilibrium price (IEP). An IEP more than `EP_MIN_GAP_PCT` above the previous close nominates a candidate; it is indicative, not a traded price or an alert. After 09:15, a fresh regular-session quote must confirm the actual opening gap, developing EMA21, price floor, EP ATR threshold, and turnover before EP BUY is sent. Stocks without a usable pre-open IEP can still be found by the completed one-minute candle refresh after the open. Provider, REST queue, or Telegram delays can postpone delivery.
 
-The monitor uses the first candle's open for the gap and aggregates today's completed one-minute candles for EP price (latest completed close), high, low, and cumulative volume. This keeps EP independent of missing daily OHLC or volume fields in WebSocket ticks. Gap candidates are fetched even if they fail Momentum filters; when the WebSocket open is missing, a candle request is still allowed. Requests share the existing background candle pool and are retried at most once per minute until EP qualifies. A missing/invalid opening candle cannot trigger EP, and a later candle's open is never substituted. The EMA21, ATR, liquidity, and once-per-day EP rules remain in place; Momentum BUY continues using live quotes and its existing ORB rules.
+The EP ATR threshold is separate from Momentum BUY's `MIN_ATR_PCT`: `EP_MIN_ATR_PCT=3.0`. IPOs retain the existing EP ATR exemption. EP does not require Momentum volume confirmation, swing strength, near-high, ORB, or stop-distance conditions.
 
 Yesterday's close and indicator baselines still exclude today's unfinished daily candle to avoid double-counting it. Today's candle is included separately through the intraday EP data.
 
@@ -302,12 +308,10 @@ Sector: Refineries
 Breakout Close Rs 110.00 | Opening Gap +4.60%
 Opening 3m High Rs 105.00
 ORB confirmation: close
-1m candle start: 2026-10-16T09:18:00+05:30
 Prev Day Low SL Rs 102.00
-EP gap radar + configured ORB confirmation. Requires price > EMA21, > Rs 20, and turnover > Rs 20 Cr.
 ```
 
-The log types are `EP_ORB_3M`, `EP_ORB_5M`, `EP_ORB_15M`, `EP_ORB_30M`, and `EP_ORB_60M`. Alert price is the first qualifying completed candle's close in close mode or the first qualifying observed live price in spot mode; log time is when the monitor emits the alert. Messages show `ORB confirmation: close` with `Breakout Close` and candle-start time, or `ORB confirmation: spot` with `Spot Price` and quote time. Delayed/reconstructed alerts are not a claim that an order was executable at an earlier price.
+The log types are `EP_ORB_3M`, `EP_ORB_5M`, `EP_ORB_15M`, `EP_ORB_30M`, and `EP_ORB_60M`. Alert price is the first qualifying completed candle's close in close mode or the first qualifying observed live price in spot mode; log time is when the monitor emits the alert. Messages show `ORB confirmation: close` with `Breakout Close`, or `ORB confirmation: spot` with `Spot Price` and quote time. Delayed/reconstructed alerts are not a claim that an order was executable at an earlier price.
 
 The 30-minute range covers 09:15 through 09:44 IST. Spot mode can qualify once that range completes at 09:45; close mode can first qualify when the following one-minute candle completes at 09:46, subject to data availability and the unchanged quality filters.
 
@@ -317,7 +321,7 @@ EP-radar regressions in `test_ep_radar.py` cover both configured modes, strict c
 
 Stocks with fewer than 252 completed daily candles are treated as IPOs: rally and ATR checks auto-pass, and proximity must be within 15% of the listing high. This uses available history as a listing-age proxy; incomplete provider history may therefore misclassify a stock. A first-day listing without a previous daily candle cannot be evaluated against yesterday's close.
 
-EMA10/EMA21 extension is shown in alerts but is not a blocking filter by default. Set `LIVE_BLOCK_EXTENDED=True` to require at most 10% above EMA10 and 20% above EMA21. Prior three-session average volume below the preceding 20-session average is informational only and never blocks a BUY. The exact NIFTY 500 market context is informational and never blocks alerts. The market summary uses exact Upstox records only; unavailable index values are shown as `NA`, with a fetched count when fewer than six are available.
+EMA10/EMA21 extension is shown in alerts but is not a blocking filter by default. Set `LIVE_BLOCK_EXTENDED=True` to require at most 10% above EMA10 and 20% above EMA21. Prior three-session average volume below the preceding 20-session average is informational only and never blocks a BUY. The combined market context is informational and never blocks alerts. For live BUY alerts, NIFTY 500 is Uptrending only when above both live EMA10 and EMA20 with both rising, Downtrending only when below both with both falling, and Chopping otherwise. TradingView's stocks-above-200-day-MA percentage is Broader Bull above 50% and Broader Bear at or below 50%; <=20% adds Oversold and >=80% adds Overbought. Matching bullish/bearish readings yield Bull/Bear Market, disagreement yields Mixed Market, and unavailable readings show NA with the other available value retained.
 
 Market-summary indexes are matched in the Upstox instrument master on either `trading_symbol` or `name` (normalized to uppercase alphanumerics), because some indexes differ between the two fields; for example Nifty 50 has `trading_symbol` `NIFTY` and `name` `Nifty 50`.
 
@@ -442,13 +446,13 @@ Missing MA values show as `NA`, followed by `Breadth data fetched: X/3` and any 
 
 The live monitor records every Momentum BUY, Episodic Pivot BUY, and EP radar ORB signal with ticker, buy price, previous-day-low SL, entry market context, alert type, date, time, and sector in `live_alerts.csv`. Momentum BUY alerts are sent only when the previous-day-low distance is positive and no more than 8% below the buy price. Their maximum portfolio allocation for 1% portfolio risk is `min(25%, 1% / SL distance)`. The position-size filter does not apply to EP or EP radar ORB alerts. The `swing_performance.py` job merges the current day's alerts with the committed history in `artifacts/swing_performance.csv`, keeps the earliest alert per stock per IST date, and recalculates those first-entry trades.
 
-The report stores the market context at entry and uses the previous trading day's low as the initial SL. In a Bear/Choppy market, a +10% move books 30%; in a Bull market, a +15% move books 20%. The remaining quantity trails at the higher of breakeven and the 10 EMA on daily closing basis. A 10 EMA close break sells 50% of the remaining quantity; a 20 EMA close break or a post-trigger breakeven close break exits the remainder. `Latest Close` is the latest daily close on the `Performance As Of Date`; all SL checks are closing-basis checks. `Performance %` is computed from entry to latest close, with weighted realized and remaining-position return after partial exits. Status values are `Trade open`, `Partial exit`, and `Full exit`. EMA and SL checks use daily bars, so this is a daily-bar retrospective report rather than tick-level execution accounting.
+The report stores the full NIFTY 500 and 200-day breadth context at entry and uses the previous trading day's low as the initial SL. Only a combined Bull Market entry gets the +15% / 20% profit booking rule; Bear, Choppy, Mixed, NA, and unknown contexts use +10% / 30%. The remaining quantity trails at the higher of breakeven and the 10 EMA on daily closing basis. A 10 EMA close break sells 50% of the remaining quantity; a 20 EMA close break or a post-trigger breakeven close break exits the remainder. `Latest Close` is the latest daily close on the `Performance As Of Date`; all SL checks are closing-basis checks. `Performance %` is computed from entry to latest close, with weighted realized and remaining-position return after partial exits. Status values are `Trade open`, `Partial exit`, and `Full exit`. EMA and SL checks use daily bars, so this is a daily-bar retrospective report rather than tick-level execution accounting.
 
 The latest CSV remains committed under `artifacts/swing_performance.csv` as the persistent calculation source. Each run also creates a formatted `artifacts/swing_performance.xlsx` workbook with an overall dashboard, ISO-week sections, merged centered week titles, weekly numbering, repeated headers/descriptions, status colors, and performance formatting. Both CSV and weekly Excel detail rows append an `Sector` column, preserving the alert's recorded sector and backfilling older missing values where available. This column is appended so existing performance/status columns retain their positions and formatting. The visible workbook hides the internal Alert ID and shows a simple number restarting within each week; the CSV retains Alert ID for persistence and event tracking. When a Partial exit or Full exit is newly recorded with today's action date, the swing workflow sends a Telegram exit alert including sector. The existing Telegram sender splits long messages automatically. The workbook is uploaded as the `swing-performance-latest` GitHub Actions artifact and sent to Telegram as a document. The swing workflow runs automatically after `NSE Live Alert Performance` completes successfully and can also be started manually.
 
 For a shareable web-format overview, open [`docs/stock-pattern-lab.html`](./docs/stock-pattern-lab.html) in a browser or publish it with any static web host.
 
-The Excel Dashboard also groups trades by **entry-time Bull Market, Bear Market, Choppy Market**, with an **Unknown** group for missing/unrecognized context. Each group shows total trades, open trades, partial exits, full exits, closed wins/losses/breakeven, closed-trade win rate, all-trade mean performance, data/other-status count, and the number of full exits with usable returns. Only numeric returns on **Full exit** rows enter win rate (breakeven remains in its denominator); open and partial trades cannot become closed wins. Mean performance includes valid open/partial returns and is an unweighted trade average, not compounded portfolio P&L. Existing overall metrics and the separate `Sector` detail column remain unchanged.
+The Excel Dashboard also groups trades by **entry-time Bull Market, Bear Market, Choppy Market, Mixed Market, and NA**, with an **Unknown** group for legacy/unrecognized context. Each group shows total trades, open trades, partial exits, full exits, closed wins/losses/breakeven, closed-trade win rate, all-trade mean performance, data/other-status count, and the number of full exits with usable returns. Only numeric returns on **Full exit** rows enter win rate (breakeven remains in its denominator); open and partial trades cannot become closed wins. Mean performance includes valid open/partial returns and is an unweighted trade average, not compounded portfolio P&L. Existing overall metrics and the separate `Sector` detail column remain unchanged.
 
 ## Configuration
 
@@ -462,7 +466,7 @@ Environment variables read in `config/settings.py`:
 
 `UPSTOX_MAX_WORKERS` is a Python constant used by live historical-data preparation (default eight), not an environment variable. Batch concurrency is fixed at six in `main.py`.
 
-The screening thresholds and VCP parameters are Python constants in `config/settings.py`, not environment variables. They include `MIN_PRICE=20`, `MIN_TURNOVER_CR=20`, `MAX_FROM_52W_HIGH=20`, `MIN_ATR_PCT=3.9`, `MIN_RVOL=1.30`, `BREAKOUT_BUFFER_PCT=0.50`, `EP_MIN_GAP_PCT=4.5`, `DARK_RED_CANDLE_DROP_PCT=4.0`, and `CANDIDATE_SCORE_REQUIRED=4`.
+The screening thresholds and VCP parameters are Python constants in `config/settings.py`, not environment variables. They include `MIN_PRICE=20`, `MIN_TURNOVER_CR=20`, `MAX_FROM_52W_HIGH=20`, `MIN_ATR_PCT=3.49` for Momentum/batch rules, `EP_MIN_ATR_PCT=3.0` for non-IPO EP alerts, `MIN_RVOL=1.30`, `BREAKOUT_BUFFER_PCT=0.50`, `EP_MIN_GAP_PCT=4.5`, `DARK_RED_CANDLE_DROP_PCT=4.0`, and `CANDIDATE_SCORE_REQUIRED=4`.
 
 ## Automation
 
@@ -471,7 +475,7 @@ There are six GitHub Actions workflows. The live alert, live performance, and sw
 | Workflow | Schedule | Action |
 | --- | --- | --- |
 | `.github/workflows/daily-scan.yml` | Manual only | Runs `main.py`, then uploads `scan_results.csv` for seven days. Artifact upload fails if the file was not created. The comment mentioning a daily scan is stale; there is no `schedule` trigger in this file. |
-| `.github/workflows/live-alerts.yml` | Manual only | Runs `live_monitor.py`. The process waits until 09:15 IST, monitors until 15:20 IST, and uploads `live_alerts.csv` even when the job fails. It commits `artifacts/market_breadth.csv` and `artifacts/signal_history.csv` (requires `contents: write`; rebases before push). A concurrency group cancels an older run on the same branch. |
+| `.github/workflows/live-alerts.yml` | Manual only | Runs `live_monitor.py`. The process waits until 09:00 IST to collect pre-open IEP candidates, confirms alerts from regular quotes after 09:15, and normally monitors until 15:20. The 358-minute deadline starts at dispatch, so dispatch around 08:30 IST allows setup before 09:00 but ends around 14:28 IST. It uploads `live_alerts.csv` and commits market breadth and signal history. |
 | `.github/workflows/live-performance.yml` | After successful live alerts and manual | Downloads the exact triggering `live-alerts.yml` artifact, runs `performance.py`, and uploads the daily report plus alert input for 30 days. |
 | `.github/workflows/swing-performance.yml` | After successful live performance and manual | Downloads the alert input, recalculates all persistent swing rows until exit or report date, commits `artifacts/swing_performance.csv`, uploads the formatted Excel workbook for 90 days, and sends it to Telegram. |
 | `.github/workflows/test-ipo-universe.yml` | Manual only | Checks out the hard-coded `Nilesh_branch_to_add_ipos` branch, installs dependencies, and calls the Upstox IPO API to print listed IPO symbols since 2026-01-01. It is not a main-branch test until its checkout ref is changed. |
@@ -489,7 +493,7 @@ Before enabling this reference branch in the main branch:
 2. Ensure Actions are enabled and the repository permits artifact read/write. `live-performance.yml` already declares `contents: read` and `actions: read` and uses the built-in `GITHUB_TOKEN` through `GH_TOKEN`. `live-alerts.yml` declares `contents: write` to push `artifacts/market_breadth.csv`; branch protection must allow `github-actions[bot]` to push, otherwise only that commit step fails.
 3. Change `ref: stock_buy_alert_tgbot` in `test-ipo-universe.yml` to the intended main/default branch, or remove the explicit checkout ref so the workflow tests the selected branch. Otherwise that workflow can fail before running project code.
 4. Keep the workflow's Python 3.12 and install from the checked-in `requirements.txt`.
-5. Treat the manually started live job as a long-running external-data job: Upstox access, Nifty/NSE source access, TradingView (`tradingview.com/markets/india`) access, and Telegram access must be available from GitHub-hosted runners. The live job waits until 09:15 IST after it is started.
+5. Treat the manually started live job as a long-running external-data job: Upstox access, Nifty/NSE source access, TradingView (`tradingview.com/markets/india`) access, and Telegram access must be available from GitHub-hosted runners. The scanner connects at 09:00 IST, so dispatch early enough for setup; its 358-minute deadline starts at workflow dispatch.
 6. Run `test_live_engine.py` manually after merging. It is the only automated Python test file currently wired to project behavior; the Telegram and IPO workflows are integration/smoke checks.
 
 ## Repository Map

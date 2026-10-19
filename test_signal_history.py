@@ -95,15 +95,15 @@ class RegimeDashboardTests(unittest.TestCase):
     def test_regimes_use_closed_only_win_rate_and_keep_open_returns_separate(self):
         rows = []
         for index, (regime, status, value) in enumerate((
-            ("Bull Market", "Full exit", "10"),
-            ("Bull Market", "Full exit", "-5"),
-            ("Bull Market", "Full exit", "0"),
-            ("Bull Market", "Trade open", "20"),
-            ("Bull Market", "Partial exit", "5"),
-            ("Bear Market", "Full exit", "-10"),
-            ("Choppy Market", "Trade open", "2"),
+            ("Market Context: Bull Market\nNIFTY 500: Uptrending\nStocks above 200 MA: 60%", "Full exit", "10"),
+            ("Market Context: Bull Market\nNIFTY 500: Uptrending\nStocks above 200 MA: 60%", "Full exit", "-5"),
+            ("Market Context: Bull Market\nNIFTY 500: Uptrending\nStocks above 200 MA: 60%", "Full exit", "0"),
+            ("Market Context: Bull Market\nNIFTY 500: Uptrending\nStocks above 200 MA: 60%", "Trade open", "20"),
+            ("Market Context: Bull Market\nNIFTY 500: Uptrending\nStocks above 200 MA: 60%", "Partial exit", "5"),
+            ("Market Context: Bear Market\nNIFTY 500: Downtrending\nStocks above 200 MA: 40%", "Full exit", "-10"),
+            ("Market Context: Mixed Market\nNIFTY 500: Uptrending\nStocks above 200 MA: 40%", "Trade open", "2"),
             ("", "ERROR", ""),
-            ("Bull Market", "Full exit", ""),
+            ("Market Context: Bull Market\nNIFTY 500: Uptrending\nStocks above 200 MA: 60%", "Full exit", ""),
         )):
             row = dict.fromkeys(swing_performance.OUTPUT_COLUMNS, "")
             row.update({
@@ -121,7 +121,11 @@ class RegimeDashboardTests(unittest.TestCase):
             ])
             self.assertEqual(sheet["I18"].value, "0.00%")
             self.assertEqual(sheet["I19"].value, "NA")
-            self.assertEqual(sheet["K20"].value, 1)
+            self.assertEqual(sheet["A20"].value, "Mixed Market")
+            self.assertEqual(sheet["B20"].value, 1)
+            self.assertEqual(sheet["A21"].value, "NA")
+            self.assertEqual(sheet["A22"].value, "Unknown")
+            self.assertEqual(sheet["K22"].value, 1)
             detail = workbook["Swing Performance"]
             self.assertEqual(detail["P3"].value, "Sector")
             self.assertEqual(detail["Q3"].value, "Signals On Entry Day")
@@ -132,11 +136,19 @@ class RegimeDashboardTests(unittest.TestCase):
         with TemporaryDirectory() as directory:
             workbook = self.write_and_read([], Path(directory))
             sheet = workbook["Dashboard"]
-            for row in range(17, 21):
+            for row in range(17, 23):
                 self.assertEqual(sheet.cell(row, 2).value, 0)
                 self.assertEqual(sheet.cell(row, 9).value, "NA")
                 self.assertEqual(sheet.cell(row, 10).value, "NA")
             workbook.close()
+
+    def test_mixed_context_uses_non_bull_swing_profit_rules(self):
+        self.assertEqual(swing_performance._market_rules(
+            "Market Context: Mixed Market\nNIFTY 500: Uptrending\nStocks above 200 MA: 40% (Broader Bear)"
+        ), (10.0, 0.30))
+        self.assertEqual(swing_performance._market_rules(
+            "Market Context: Bull Market\nNIFTY 500: Uptrending\nStocks above 200 MA: 60% (Broader Bull)"
+        ), (15.0, 0.20))
 
 
 if __name__ == "__main__":

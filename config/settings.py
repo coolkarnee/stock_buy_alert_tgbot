@@ -7,11 +7,13 @@ TELEGRAM_CHAT_ID=os.getenv("TELEGRAM_CHAT_ID","")
 MIN_PRICE=20.0
 MIN_TURNOVER_CR=20.0
 MAX_FROM_52W_HIGH=20.0
-MIN_ATR_PCT=3.9
+MIN_ATR_PCT=3.49
 MIN_RVOL=1.30
 BREAKOUT_BUFFER_PCT=0.50
 # EP opening gap must be strictly greater than this percentage.
 EP_MIN_GAP_PCT=4.5
+# Non-IPO EP alerts require ATR strictly above this percentage.
+EP_MIN_ATR_PCT=3.0
 # Momentum and EP radar opening-range trigger: "close" requires a completed candle close
 # above the opening-range high; "spot" triggers when live price crosses it.
 OPENING_RANGE_BREAKOUT_MODE="close"

@@ -18,6 +18,7 @@ from scanner.breadth import send_breadth_alerts
 from scanner.live_engine import build_state, evaluate, update_intraday, update_ep_radar_spot, _completed, EP_ORB_WINDOWS
 from scanner.live_data import intraday_minutes
 from scanner.indicators import ema
+from scanner.market_context import classify_nifty500, market_context as format_market_context
 from scanner.sector import get_sector, UNAVAILABLE_SECTOR
 from scanner.signal_history import SignalHistory, SIGNAL_HISTORY_FILE
 from scanner.upstox import (
@@ -82,7 +83,7 @@ def find_market_index_keys(instruments):
 
 
 def classify_index(index_state, quote):
-    """Classify an index using the existing live EMA market-context rules."""
+    """Classify an index for the existing multi-index market summary."""
     price = quote.get("last_price", 0.0)
     if price <= 0 or index_state["ema10"] <= 0 or index_state["ema20"] <= 0:
         return "Chop", None
@@ -189,6 +190,7 @@ def extract_quote(feed):
         volume = daily.get("vol") or daily.get("volume")
     return {
         "last_price": float(ltp) if ltp is not None else 0.0,
+        "iep": float(ltpc["iep"]) if ltpc.get("iep") is not None else None,
         "volume": float(volume) if volume is not None else 0.0,
         "ohlc": {field: float(daily.get(field) or 0) for field in ("open", "high", "low")},
         "timestamp": str(ltpc.get("ltt") or feed.get("currentTs", "")),
@@ -218,8 +220,11 @@ def _performance_line(r):
 
 
 def fmt_alert(kind, r):
-    market = r.get("market_regime", "Choppy Market")
-    benchmark = r.get("market_benchmark", "NIFTY 500")
+    market_details = r.get("market_context") or format_market_context(
+        r.get("nifty_trend", "NA"),
+        r.get("stocks_above_200ma"),
+        r.get("breadth_date"),
+    )[1]
     ranges = ", ".join(f"{window}m" for window in r["orb_windows"])
     momentum_tag = "Momentum Stock\n" if r.get("momentum_stock") else ""
     if kind == "EP":
@@ -231,7 +236,7 @@ def fmt_alert(kind, r):
             f"Prev Day Low SL Rs {r['prev_low']:.2f}\n"
             f"{_atr_turnover_line(r)}\n"
             f"{_performance_line(r)}\n"
-            f"{benchmark}: {market}"
+            f"{market_details}"
         )
     volume_confirmations = []
     if r["rvol_condition"]:
@@ -254,7 +259,7 @@ def fmt_alert(kind, r):
         f"52W HI {-r['from_high']:+.2f}% | 52W LO {r['swing']:+.2f}%\n"
         f"{_strength_line(r)}"
         f"{volume_line}\n"
-        f"{benchmark}: {market}"
+        f"{market_details}"
     )
 
 def market_open_close():
@@ -268,19 +273,16 @@ def fmt_ep_orb_alert(state, window, breakout):
     gap = (state["ep_radar_open"] / state["prev_close"] - 1) * 100
     spot = breakout["orb_mode"] == "spot"
     price_label = "Spot Price" if spot else "Breakout Close"
-    time_line = (
-        f"Spot quote time: {breakout['quote_time']}"
-        if spot else f"1m candle start: {breakout['candle_time']}"
-    )
+    time_line = f"Spot quote time: {breakout['quote_time']}\n" if spot else ""
     return (
         f"EP RADAR ORB BUY - {state['symbol']} | {window}m\n"
         f"Sector: {state.get('sector', UNAVAILABLE_SECTOR)}\n"
         f"{price_label} Rs {breakout['price']:.2f} | Opening Gap {gap:+.2f}%\n"
         f"Opening {window}m High Rs {breakout['range_high']:.2f}\n"
         f"ORB confirmation: {breakout['orb_mode']}\n"
-        f"{time_line}\n"
+        f"{time_line}"
         f"Prev Day Low SL Rs {state['prev_low']:.2f}\n"
-        "EP gap radar + configured ORB confirmation. Requires price > EMA21, > Rs 20, and turnover > Rs 20 Cr."
+        f"{state.get('market_context') or format_market_context(state.get('nifty_trend', 'NA'), state.get('stocks_above_200ma'), state.get('breadth_date'))[1]}"
     )
 
 
@@ -363,16 +365,26 @@ def run():
     sent_ep = set()
     sent_ep_orb = set()
     latest_quotes = {}
+    preopen_iep = {}
+    preopen_ep_candidates = set()
+    post_open_quotes = set()
     index_quotes = {}
     index_name_by_key = {key: name for name, key in index_keys.items()}
     quote_lock = Lock()
     pending = {}
     next_refresh = {}
     pool = ThreadPoolExecutor(max_workers=settings.UPSTOX_MAX_WORKERS)
-    market_context = {"above_ema": None, "regime": "Choppy Market"}
+    market_context = {
+        "above_ema": None,
+        "regime": "NA",
+        "stocks_above_200ma": None,
+        "breadth_date": None,
+    }
     last_log = 0.0
     open_summary_sent = False
     start_notification_sent = False
+    start, end = market_open_close()
+    preopen_start = start.replace(hour=9, minute=0)
 
     def on_open():
         nonlocal start_notification_sent
@@ -399,24 +411,20 @@ def run():
                     with quote_lock:
                         index_quotes[index_name_by_key[instrument_key]] = quote
                 if instrument_key == nifty_key:
-                    if (benchmark_ema10 is not None and benchmark_ema20 is not None and
-                            benchmark_prev_ema10 is not None and benchmark_prev_ema20 is not None and
-                            quote["last_price"] > 0):
-                        live_ema10 = benchmark_ema10 + 2 / 11 * (quote["last_price"] - benchmark_ema10)
-                        live_ema20 = benchmark_ema20 + 2 / 21 * (quote["last_price"] - benchmark_ema20)
-                        ema10_up = live_ema10 > benchmark_prev_ema10
-                        ema20_up = live_ema20 > benchmark_prev_ema20
-                        if quote["last_price"] > live_ema10 and quote["last_price"] > live_ema20 and ema10_up and ema20_up:
-                            market_context["regime"] = "Bull Market"
-                        elif quote["last_price"] < live_ema10 and quote["last_price"] < live_ema20:
-                            market_context["regime"] = "Bear Market"
-                        else:
-                            market_context["regime"] = "Choppy Market"
-                        market_context["above_ema"] = quote["last_price"] > live_ema20
+                    market_context["regime"], live_emas = classify_nifty500(
+                        benchmark, quote["last_price"],
+                    )
+                    market_context["above_ema"] = (
+                        quote["last_price"] > live_emas[1] if live_emas else None
+                    )
                     continue
                 if instrument_key in states:
                     with quote_lock:
                         latest_quotes[instrument_key] = quote
+                        if quote["iep"] is not None and datetime.now(IST) < start:
+                            preopen_iep[instrument_key] = quote["iep"]
+                        if datetime.now(IST) >= start:
+                            post_open_quotes.add(instrument_key)
             except Exception as exc:
                 print(f"[{instrument_key}] tick processing failed: {exc}")
 
@@ -428,12 +436,30 @@ def run():
     streamer.on("error", on_error)
     streamer.on("close", on_close)
 
-    start, end = market_open_close()
     try:
-        while datetime.now(IST) < start:
+        while datetime.now(IST) < preopen_start:
             time.sleep(5)
         streamer.connect()
+        preopen_scan_done = False
         while datetime.now(IST) < end:
+            if not preopen_scan_done and datetime.now(IST) >= start:
+                with quote_lock:
+                    opening_indications = dict(preopen_iep)
+                preopen_ep_candidates = {
+                    instrument_key
+                    for instrument_key, iep in opening_indications.items()
+                    if iep > states[instrument_key]["prev_close"] * (
+                        1 + settings.EP_MIN_GAP_PCT / 100
+                    )
+                }
+                candidate_symbols = sorted(
+                    states[instrument_key]["symbol"] for instrument_key in preopen_ep_candidates
+                )
+                print(
+                    f"Pre-open EP gap candidates ({len(preopen_ep_candidates)}): "
+                    f"{', '.join(candidate_symbols) or 'none'}; waiting for regular-session confirmation."
+                )
+                preopen_scan_done = True
             for instrument_key, future in list(pending.items()):
                 if not future.done():
                     continue
@@ -447,6 +473,7 @@ def run():
             with quote_lock:
                 quotes = dict(latest_quotes)
                 current_index_quotes = dict(index_quotes)
+                opened_quotes = set(post_open_quotes)
             if not open_summary_sent and datetime.now(IST) >= start + MARKET_CONTEXT_DELAY:
                 # Retry index history after the open and use a REST snapshot
                 # if the WebSocket has not delivered index ticks.
@@ -487,20 +514,42 @@ def run():
                     )
                 )
                 try:
-                    send_breadth_alerts(datetime.now(IST).date())
+                    breadth = send_breadth_alerts(datetime.now(IST).date()) or {}
+                    market_context["stocks_above_200ma"] = breadth.get("200-day MA")
+                    market_context["breadth_date"] = (
+                        datetime.now(IST).date().isoformat()
+                        if market_context["stocks_above_200ma"] is not None else None
+                    )
                 except Exception as exc:
                     print(f"Market breadth alerts failed: {exc}")
                 open_summary_sent = True
             evaluated = []
             ep_evaluated = []
             for instrument_key, quote in quotes.items():
+                if instrument_key not in opened_quotes:
+                    continue
                 state = states[instrument_key]
                 update_ep_radar_spot(state, quote)
                 alert_key = (datetime.now(IST).date(), state["symbol"])
+                if (datetime.now(IST) >= start
+                    and instrument_key in preopen_ep_candidates
+                    and instrument_key in opened_quotes
+                        and alert_key not in sent_ep and quote["last_price"] > 0
+                        and (quote.get("ohlc") or {}).get("open", 0) > 0):
+                    state["ep_quote"] = {
+                        **quote,
+                        "timestamp": datetime.now(IST).isoformat(),
+                    }
                 if market_context["above_ema"] is not None:
                     state["market_above_ema"] = market_context["above_ema"]
                 state["market_regime"] = market_context["regime"]
                 state["market_benchmark"] = benchmark_name
+                state["nifty_trend"] = market_context["regime"]
+                state["stocks_above_200ma"] = market_context["stocks_above_200ma"]
+                state["breadth_date"] = market_context["breadth_date"]
+                state["market_context_category"], state["market_context"] = format_market_context(
+                    state["nifty_trend"], state["stocks_above_200ma"], state["breadth_date"],
+                )
                 ep_quote = state["ep_quote"]
                 ep_result = None
                 if ep_quote is not None and alert_key not in sent_ep:
@@ -521,6 +570,7 @@ def run():
                 needs_ep_data = (
                     alert_key not in sent_ep and ep_gap_candidate
                     and datetime.now(IST) >= start + timedelta(minutes=1)
+                    and instrument_key not in preopen_ep_candidates
                     and not (ep_result and ep_result["episodic_pivot"])
                 )
                 needs_orb_data = (
@@ -556,7 +606,7 @@ def run():
                             result["symbol"],
                             f'{result["price"]:.2f}',
                             f'{result["prev_low"]:.2f}',
-                            result.get("market_regime", ""),
+                            result.get("market_context", ""),
                             result["sector"],
                         ])
                     frequency = signal_history.record(result["symbol"], "EP", alert_time)
@@ -575,7 +625,7 @@ def run():
                             result["symbol"],
                             f'{result["price"]:.2f}',
                             f'{result["prev_low"]:.2f}',
-                            result.get("market_regime", ""),
+                            result.get("market_context", ""),
                             result["sector"],
                         ])
                     frequency = signal_history.record(result["symbol"], "BUY", alert_time)
@@ -597,7 +647,7 @@ def run():
                             state["symbol"],
                             f'{breakout["price"]:.2f}',
                             f'{state["prev_low"]:.2f}',
-                            state.get("market_regime", ""),
+                            state.get("market_context", ""),
                             state["sector"],
                         ])
                     frequency = signal_history.record(state["symbol"], f"EP_ORB_{window}M", alert_time)

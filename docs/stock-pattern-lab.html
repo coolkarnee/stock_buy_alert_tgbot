@@ -43,9 +43,9 @@
 
   <div class="grid">
     <section class="card"><h3>Momentum BUY</h3><p>Every live strength, breakout, liquidity, opening-range, swing-period, and SL-risk condition must pass.</p></section>
-    <section class="card"><h3>Episodic Pivot BUY</h3><p>An independent alert for an opening gap above 4.5%, price above developing EMA21, price above ₹20, ATR qualification, and liquidity. It waits for the first opening minute to finish.</p></section>
+    <section class="card"><h3>Episodic Pivot BUY</h3><p>An independent alert for an opening gap above 4.5%, price above developing EMA21 and ₹20, ATR above 3.0% for non-IPOs, and sufficient liquidity. Pre-open IEP nominates candidates; a regular-session quote confirms them after 09:15.</p></section>
     <section class="card"><h3>EP radar opening-range BUY</h3><p>For any stock opening more than 4.5% higher: opening-range confirmation on 3, 5, 15, 30, or 60 minutes using the same close/spot choice as Momentum, while also staying above EMA21, above Rs 20, and above Rs 20 Cr turnover.</p></section>
-    <section class="card"><h3>Swing performance</h3><p>Every alert uses the previous trading day's low as the initial SL. A +10% move in Bear/Choppy context or +15% in Bull context books part of the position; the remainder trails on daily 10 EMA/breakeven, then 20 EMA. Rows are marked as Trade open, Partial exit, or Full exit through the report date.</p></section>
+    <section class="card"><h3>Swing performance</h3><p>Every alert uses the previous trading day's low as the initial SL. A +10% move in non-Bull context or +15% in combined Bull context books part of the position; the remainder trails on daily 10 EMA/breakeven, then 20 EMA. Rows are marked as Trade open, Partial exit, or Full exit through the report date.</p></section>
   </div>
 
   <h2>When will a Telegram BUY alert fire?</h2>
@@ -56,7 +56,7 @@
   <h3>Episodic Pivot BUY</h3>
   <p>This alert means the stock opened with a sharp positive gap and is continuing to hold above an important trend level. This can indicate new information, a result, an announcement, or a sudden change in investor demand.</p>
   <p>Gap-up stocks can be volatile: they may continue higher, move sideways, or quickly give back the gap. The alert is therefore a prompt for further research and risk planning, not confirmation of a guaranteed return.</p>
-  <p class="note">The message can arrive only during the live monitoring session after the market opens. Every required condition for that category must be satisfied at the same time. At most one Momentum BUY and one Episodic Pivot BUY is sent for the same stock during a run. No automatic order is placed.</p>
+  <p class="note">The live monitor connects at 09:00 IST to collect indicative pre-open IEP candidates. IEP is not a traded price; EP BUY is sent only after a fresh regular-session quote confirms the required conditions. At most one Momentum BUY and one Episodic Pivot BUY is sent for the same stock during a run. No automatic order is placed.</p>
   <p>Telegram delivery requires the Telegram settings. Without them, the alert appears in the workflow log.</p>
   <p>Long Telegram messages are split automatically rather than shortened, including the signal-frequency information. Oversized image or workbook captions follow as text. Broker requests are paced within per-process quotas, so large watchlists can delay startup and candle confirmations; avoid running other scanners or reports on the same broker account simultaneously. Network and provider failures can still prevent delivery.</p>
   <p class="note">EP BUY never suppresses Momentum BUY: the same stock can receive both when their own conditions pass. The separate EP radar scan can add one breakout message per range, up to five per stock per session.</p>
@@ -71,7 +71,7 @@
       <tr><td>Momentum</td><td>Price above yesterday's close.</td></tr>
       <tr><td>Breakout</td><td>Price above the previous-session reference with a 0.50% buffer.</td></tr>
       <tr><td>Near high</td><td>Within 20% of the 52-week high, or 15% for IPOs.</td></tr>
-      <tr><td>Volatility</td><td>ATR14 &gt;3.9%, except IPOs.</td></tr>
+      <tr><td>Volatility</td><td>ATR14 &gt;3.49%, except IPOs.</td></tr>
       <tr><td>Price / liquidity</td><td>Price &gt;₹20 and turnover &gt;₹20 Cr.</td></tr>
       <tr><td>Opening range</td><td>Break at least one completed 3m, 5m, 15m, 30m, or 60m range.</td></tr>
       <tr><td>SL risk</td><td>Previous-day-low distance is positive and ≤8%.</td></tr>
@@ -102,14 +102,14 @@
   <h2>Episodic Pivot BUY</h2>
   <ul>
     <li>Day's open is strictly more than 4.5% above the previous trading day's close.</li>
-    <li>The actual opening one-minute candle must be complete and available, normally around 09:16 IST. Delayed data can mean a later alert.</li>
-    <li>The latest completed minute's closing price is above developing EMA21.</li>
+    <li>Pre-open IEP strictly more than 4.5% above yesterday's close nominates a candidate; IEP is indicative, not a traded price.</li>
+    <li>After 09:15 IST, a fresh regular-session quote confirms the actual opening gap and a price above developing EMA21.</li>
     <li>Price is strictly above ₹20.</li>
-    <li>ATR is above 3.9%, except IPOs.</li>
+    <li>ATR is strictly above EP_MIN_ATR_PCT (default 3.0%), except IPOs.</li>
     <li>Turnover/liquidity is above ₹20 Cr.</li>
   </ul>
   <p class="note">EP alerts do not require Momentum BUY volume confirmation, momentum, breakout, rally-strength, near-high, or opening-range conditions.</p>
-  <p>EP uses today's completed candles while keeping the previous trading day's close as the gap reference. Starting monitoring before the market opens does not skip the signal. If other conditions only qualify later, the alert may arrive later in the session.</p>
+  <p>The scanner connects at 09:00 IST and evaluates pre-open IEP candidates using actual regular-session quotes after the open. A candidate can alert later if EMA21, ATR, or liquidity confirms later. Stocks without usable pre-open IEP can still be detected by the regular post-open completed-candle scan.</p>
 
   <h2>EP radar: a simpler gap-and-breakout watch</h2>
   <p>Every stock with a verified opening gap strictly above 4.5% enters this radar, even if the full EP BUY conditions fail. Its opening 3-minute, 5-minute, 15-minute, 30-minute and 1-hour highs become five separate reference levels.</p>
@@ -123,7 +123,7 @@ Breakout Close Rs 110.00 | Opening Gap +4.60%
 Opening 3m High Rs 105.00
 ORB confirmation: close
 Prev Day Low SL Rs 102.00</pre>
-  <p>The alert identifies the confirmation mode: close messages show the confirming candle's close and timestamp; spot messages show the live spot price and quote time. Delayed data can produce later delivery; a displayed earlier price does not guarantee that entry was available when you received the message.</p>
+  <p>The alert identifies the confirmation mode: close messages show the confirming candle's close; spot messages show the live spot price and quote time. Delayed data can produce later delivery; a displayed earlier price does not guarantee that entry was available when you received the message.</p>
 
   <h2>Sector context with every stock alert</h2>
   <p>Momentum BUY and Episodic Pivot BUY messages include the company's <strong>sector</strong> as classified by Upstox, for example Refineries.</p>
@@ -154,16 +154,18 @@ Software - Application: 1 alerts | 1 Momentum BUY | 0 EP | 1 distinct stocks | 0
   <p>By default, Momentum requires a completed candle to close above an opening-range high, rather than simply touching or briefly crossing it. An optional spot mode uses the live price crossing instead. EP does not need this opening-range breakout.</p>
 
   <h2>Market context</h2>
-  <p>The live alert displays one of exactly three categories:</p>
+  <p>Every BUY alert (Momentum, EP, EP radar ORB, and batch BUY) includes the NIFTY 500 trend and the percentage of stocks above the 200-day moving average, with the breadth observation date when available.</p>
   <ul>
-    <li><strong>Bull Market:</strong> benchmark above both 10 and 20 EMA, with both EMA slopes rising.</li>
-    <li><strong>Bear Market:</strong> benchmark below both 10 and 20 EMA.</li>
-    <li><strong>Choppy Market:</strong> all other conditions.</li>
+    <li><strong>Uptrending:</strong> NIFTY 500 is above EMA10 and EMA20, and both EMAs are rising.</li>
+    <li><strong>Downtrending:</strong> NIFTY 500 is below EMA10 and EMA20, and both EMAs are falling.</li>
+    <li><strong>Chopping:</strong> all other NIFTY 500 conditions.</li>
+    <li><strong>Broader Bull:</strong> more than 50% of stocks are above their 200-day MA; <strong>Broader Bear:</strong> 50% or fewer.</li>
+    <li><strong>Oversold:</strong> 20% or fewer above their 200-day MA; <strong>Overbought:</strong> 80% or more.</li>
   </ul>
-  <p>NIFTY 500 provides the market context when available; it is informational, not a buy gate. A six-index market summary and market-breadth review normally arrive 20 minutes after the open, separately from stock signals. Unavailable index values are shown as NA. Momentum's stop-distance and position-size checks remain separate from EP.</p>
+  <p><strong>Bull Market</strong> means NIFTY 500 is Uptrending and breadth is Broader Bull; <strong>Bear Market</strong> means it is Downtrending and breadth is Broader Bear. NIFTY 500 chopping is <strong>Choppy Market</strong>; disagreement between the index and breadth is <strong>Mixed Market</strong>. Missing inputs display NA while retaining the other available reading. Context is informational and does not block BUY alerts. Live breadth is populated after the market-open TradingView scrape; earlier alerts show Stocks above 200 MA: NA.</p>
 
   <h2>Persistent performance sheet</h2>
-  <p>The Excel Dashboard now compares outcomes by the market context <strong>at entry</strong>: Bull, Bear, Choppy and Unknown. Each group shows total trades, open/partial/full-exit counts, closed wins/losses/breakeven and closed-trade win rate. Only fully exited trades with usable returns count toward win rate; open and partial trades remain separate. The all-trade average includes valid marked-to-market returns and is not portfolio P&amp;L.</p>
+  <p>The Excel Dashboard compares outcomes by the combined market context <strong>at entry</strong>: Bull, Bear, Choppy, Mixed, NA and Unknown. The detailed NIFTY trend and breadth percentage remain in each trade's Market Context field. Only a combined Bull Market entry uses the +15% / 20% profit booking rule; other, mixed, or unavailable contexts use +10% / 30%.</p>
   <p>Sector remains a separate trade column. Two additional columns show recorded signals on the entry date and over that date plus the preceding six calendar days. They include later same-day confirmations without changing the first entry price; legacy entries without signal coverage show NA.</p>
   <p>The swing report follows the first alert per stock per trading day beyond entry. Later same-day signals do not create extra swing rows or change the entry. The Excel workbook is sent to Telegram with an overall dashboard and weekly trade sections. Every trade row includes its sector, first entry price, previous-day-low stop, latest close, performance, and status. Newly recorded partial or full exits are also announced with sector context.</p>
   <p>In Bear or Choppy entry context, reaching +10% books 30% of the position; in Bull context, reaching +15% books 20%. The remaining position is monitored using breakeven and daily closing-basis EMA rules. A 10 EMA close break exits half of the remaining size; a 20 EMA close break or breakeven break exits the remainder. These are retrospective calculations, not executed orders, and actual trading results may differ.</p>
@@ -179,7 +181,7 @@ Software - Application: 1 alerts | 1 Momentum BUY | 0 EP | 1 distinct stocks | 0
       <tr><td>Holding Days</td><td>Trading sessions from alert through exit, or through the report date while open.</td></tr>
       <tr><td>Performance %</td><td>Return from buy price to the latest close, with weighted realized and remaining-position performance after partial exits.</td></tr>
       <tr><td>Status</td><td><code>Trade open</code>, <code>Partial exit</code>, <code>Full exit</code>, or a data/error status.</td></tr>
-      <tr><td>Market Context</td><td>Entry context: Bull Market, Bear Market, or Choppy Market. It controls the profit-booking threshold and size.</td></tr>
+      <tr><td>Market Context</td><td>Combined NIFTY 500 trend and above-200-MA breadth at entry, including their values or NA. It determines the swing profit-booking rule.</td></tr>
       <tr><td>Sector</td><td>Upstox's company-profile sector classification. NA means no usable sector was available.</td></tr>
     </tbody>
   </table>

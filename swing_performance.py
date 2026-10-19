@@ -14,6 +14,7 @@ from scanner.upstox import current_day_daily, historical_daily, load_nse_equitie
 from scanner.indicators import ema
 from scanner.sector import known_sector, resolve_sector
 from scanner.alert_history import first_daily_alerts
+from scanner.market_context import MARKET_CONTEXT_CATEGORIES, market_context_category
 from scanner.signal_history import SignalHistory, SIGNAL_HISTORY_FILE
 
 ARTIFACT_DIR = Path("artifacts")
@@ -58,7 +59,7 @@ COLUMN_DESCRIPTIONS = [
     "Trading sessions from alert through the latest action/report date.",
     "Weighted realized return plus the marked-to-market return on any remaining size.",
     "Trade open, Partial exit, Full exit, or a data status.",
-    "Bull Market, Bear Market, or Choppy Market at entry.",
+    "Combined NIFTY 500 trend and above-200-MA breadth at entry; includes raw values or NA.",
     "Company sector from Upstox company profile by ISIN; NA if not supplied.",
     "All recorded live signals for this stock on its entry date; not extra trades.",
     "All recorded live signals over the entry date and preceding six IST dates.",
@@ -154,9 +155,10 @@ def _write_excel(frame):
         cell.font = header_font
         cell.alignment = Alignment(wrap_text=True)
     context = report["Market Context"].fillna("").astype(str).str.strip()
-    regimes = ("Bull Market", "Bear Market", "Choppy Market")
+    regimes = MARKET_CONTEXT_CATEGORIES[:-1]
+    context_categories = context.map(market_context_category)
     for row_number, regime in enumerate((*regimes, "Unknown"), start=17):
-        subset = report[context == regime] if regime in regimes else report[~context.isin(regimes)]
+        subset = report[context_categories == regime]
         returns = pd.to_numeric(subset["Performance %"], errors="coerce")
         returns = returns.where(returns.abs() < float("inf"))
         closed_returns = returns[subset["Status"] == "Full exit"].dropna()
@@ -173,8 +175,8 @@ def _write_excel(frame):
         ]
         for column, value in enumerate(values, start=1):
             summary_sheet.cell(row_number, column, value)
-    summary_sheet.cell(22, 1, "Win rate uses full exits with numeric returns; breakeven is in the denominator.")
-    summary_sheet.cell(23, 1, "Mean performance includes open and partial trades; returns are not portfolio P&L.")
+    summary_sheet.cell(24, 1, "Win rate uses full exits with numeric returns; breakeven is in the denominator.")
+    summary_sheet.cell(25, 1, "Mean performance includes open and partial trades; returns are not portfolio P&L.")
     for column in ("F", "G", "H", "I", "J", "K", "L"):
         summary_sheet.column_dimensions[column].width = 23
 
@@ -186,7 +188,7 @@ def _write_excel(frame):
     widths = {
         "A": 8, "B": 20, "C": 18, "D": 13, "E": 14, "F": 15,
         "G": 13, "H": 13, "I": 13, "J": 14, "K": 28, "L": 13,
-        "M": 18, "N": 18, "O": 18, "P": 36,
+        "M": 18, "N": 18, "O": 48, "P": 36,
         "Q": 24, "R": 26,
     }
     for column, width in widths.items():
@@ -237,7 +239,8 @@ def _write_excel(frame):
                     value = ""
                 cell = detail_sheet.cell(current_row, column_number, value)
                 cell.border = border
-                cell.alignment = Alignment(vertical="top")
+                cell.alignment = Alignment(vertical="top", wrap_text=column_number == 15)
+            detail_sheet.row_dimensions[current_row].height = 42
             status_cell = detail_sheet.cell(current_row, 14)
             performance_cell = detail_sheet.cell(current_row, 13)
             if status_cell.value == "Trade open":
@@ -382,7 +385,7 @@ def _ist_dates(values):
 
 def _market_rules(context):
     """Return the profit trigger and booking size for the entry regime."""
-    if "BULL" in str(context).upper():
+    if market_context_category(context) == "Bull Market":
         return 15.0, 0.20
     return 10.0, 0.30
 

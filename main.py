@@ -2,6 +2,11 @@ import pandas as pd
 from scanner.upstox import load_nse_equities,find_nifty500_key,historical_daily,historical_many
 from scanner.engine import analyze
 from scanner.alerts import send,format_result
+from scanner.market_context import (
+    classify_nifty500_daily,
+    latest_200ma_breadth,
+    market_context,
+)
 from scanner.sector import get_sector
 
 def run(limit=None):
@@ -13,6 +18,11 @@ def run(limit=None):
     nifty_key=find_nifty500_key()
     nifty_df=historical_daily(nifty_key,years=2)
     print(f'Nifty 500 benchmark: {nifty_key}, {len(nifty_df)} daily bars')
+    nifty_trend=classify_nifty500_daily(nifty_df)
+    stocks_above_200ma,breadth_date=latest_200ma_breadth()
+    context_category,context_text=market_context(
+        nifty_trend,stocks_above_200ma,breadth_date,
+    )
 
     results=[]
     status_rows=[]
@@ -40,6 +50,8 @@ def run(limit=None):
         try:
             result=analyze(symbol,df,nifty_df)
             if result:
+                result['market_context']=context_text
+                result['market_context_category']=context_category
                 result['data_status']='ok'
                 result['history_bars']=len(df)
                 result['error']=''

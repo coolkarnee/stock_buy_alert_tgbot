@@ -1,6 +1,6 @@
 import unittest
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from threading import Lock
 from unittest.mock import Mock, patch
 
@@ -106,12 +106,17 @@ class UpstoxRateLimitTests(unittest.TestCase):
 
     def test_ipo_pages_use_shared_request_path(self):
         payloads = [
-            {"data": [{"symbol": "TEST", "bidding_start_date": "2026-01-10"}],
+            {"data": [{"symbol": "TEST", "listing_date": "2026-01-10"}],
              "meta_data": {"page": {"total_pages": 2}}},
             {"data": [], "meta_data": {"page": {"total_pages": 2}}},
         ]
         with patch.object(upstox, "_request_json", side_effect=payloads) as request:
-            self.assertEqual(universe._ipo_symbols(), {"TEST"})
+            listings = universe._listed_ipo_dates()
+            self.assertEqual(listings, {"TEST": "2026-01-10"})
+            self.assertEqual(
+                universe.recent_ipo_listing_dates(listings, date(2026, 10, 20)),
+                {"TEST": "2026-01-10"},
+            )
         self.assertEqual(request.call_count, 2)
         self.assertEqual(request.call_args_list[0].kwargs["params"]["page_number"], 1)
         self.assertEqual(request.call_args_list[1].kwargs["params"]["page_number"], 2)

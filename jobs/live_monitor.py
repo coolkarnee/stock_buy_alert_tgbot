@@ -202,8 +202,11 @@ def _atr_turnover_line(r):
 
 
 def _strength_line(r):
-    if r["is_ipo"]:
-        return "Strength: IPO exempt"
+    if not r.get("strength_ready", False):
+        return (
+            f"Strength: warm-up ({r['history_days']}/"
+            f"{settings.MOMENTUM_STRENGTH_START_SESSIONS} completed sessions)"
+        )
     matched = ", ".join(f"{label} {move:+.1f}% (>{threshold:g}%)"
                         for label, move, threshold in r["swing_moves_matched"])
     return f"Strength: {matched or 'none'}"
@@ -321,6 +324,9 @@ def run():
 
     nifty_key = index_keys.get("NIFTY 500")
     nifty_df = index_frames.get("NIFTY 500", pd.DataFrame())
+    completed_nifty = _completed(nifty_df)
+    if not completed_nifty.empty:
+        signal_history.record_sessions(completed_nifty["timestamp"])
     benchmark = index_states.get("NIFTY 500")
     benchmark_ema10 = benchmark["ema10"] if benchmark else None
     benchmark_ema20 = benchmark["ema20"] if benchmark else None

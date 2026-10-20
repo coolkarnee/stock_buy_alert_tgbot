@@ -63,7 +63,6 @@ def build_state(symbol, df, nifty_df):
     return {
         "symbol": symbol,
         "history_days": len(history),
-        "is_ipo": len(history) < 252,
         "ema10": float(ema(history.close, 10).iloc[-1]),
         "ema21": float(ema(history.close, 21).iloc[-1]),
         # Previous-session EMA values, used for the completed-bar slope check.
@@ -201,7 +200,8 @@ def _ep_radar_quality_passes(state, price, volume):
     current_ema21 = state["ema21"] + 2 / 22 * (price - state["ema21"])
     _, _, turnover_cr = _live_turnover_metrics(state, price, volume)
     return (
-        price > current_ema21
+        (state["history_days"] < settings.EMA21_REQUIRED_SESSIONS
+         or price > current_ema21)
         and price > settings.MIN_PRICE
         and turnover_cr > settings.MIN_TURNOVER_CR
     )
@@ -310,6 +310,10 @@ def evaluate(state, quote):
     extension21 = (price / current_ema21 - 1) * 100
     today_tr = max(day_high - day_low, abs(day_high - state["prev_close"]), abs(day_low - state["prev_close"]))
     atr_pct = (state["prior_tr13"] + today_tr) / 14 / price * 100
+    atr_days = min(state["history_days"], 13) + 1
+    ema21_ready = state["history_days"] >= settings.EMA21_REQUIRED_SESSIONS
+    atr_ready = atr_days >= settings.ATR_REQUIRED_SESSIONS
+    strength_ready = state["history_days"] >= settings.MOMENTUM_STRENGTH_START_SESSIONS
     year_high = max(state["year_high"], day_high)
     year_low = min(state["year_low"], day_low)
     from_high = (year_high - price) / year_high * 100
@@ -363,7 +367,7 @@ def evaluate(state, quote):
         if reference is not None else None
         for label, reference in state["swing_move_references"].items()
     }
-    swing_move_condition = state["is_ipo"] or any(
+    swing_move_condition = any(
         reference is not None and (price / reference - 1) * 100 > threshold
         for label, _, threshold in SWING_MOVE_RULES
         for reference in [state["swing_move_references"].get(label)]
@@ -380,14 +384,18 @@ def evaluate(state, quote):
         if sl_risk_valid else None
     )
     checks = {
-        "trend": state["history_days"] + 1 <= 21 or price > current_ema21,
+        "trend": not ema21_ready or price > current_ema21,
         "extension": not getattr(settings, "LIVE_BLOCK_EXTENDED", False) or (extension10 <= 10 and extension21 <= 20),
         "volume_surge": rvol_condition or pocket or first30_surge or intraday_move_condition or daily_volume_condition,
         "momentum": price > state["prev_close"],
         "breakout": breakout,
-        "strength": swing_move_condition,
-        "near_high": from_high <= (15 if state["is_ipo"] else settings.MAX_FROM_52W_HIGH),
-        "volatility": state["is_ipo"] or atr_pct > settings.MIN_ATR_PCT,
+        "strength": not strength_ready or swing_move_condition,
+        "near_high": from_high <= (
+            settings.EARLY_HISTORY_MAX_FROM_52W_HIGH
+            if not strength_ready
+            else settings.MAX_FROM_52W_HIGH
+        ),
+        "volatility": not atr_ready or atr_pct > settings.MIN_ATR_PCT,
         "price_floor": price > settings.MIN_PRICE,
         "liquidity": liquidity_condition,
         "orb": bool(orb_windows),
@@ -397,9 +405,9 @@ def evaluate(state, quote):
         state.get("ep_quote") is not None and
         pd.Timestamp(state["ep_quote"]["timestamp"]).date() == datetime.now(IST).date() and
         day_open > state["prev_close"] * (1 + settings.EP_MIN_GAP_PCT / 100) and
-        price > current_ema21 and
+        (not ema21_ready or price > current_ema21) and
         price > settings.MIN_PRICE and
-        (state["is_ipo"] or atr_pct > settings.EP_MIN_ATR_PCT) and
+        (not atr_ready or atr_pct > settings.EP_MIN_ATR_PCT) and
         liquidity_condition
     )
     return {
@@ -422,7 +430,7 @@ def evaluate(state, quote):
         "intraday_move_condition": intraday_move_condition,
         "atr_pct": atr_pct,
         # prior_tr13 holds up to 13 completed sessions; today's developing range is the 14th.
-        "atr_days": min(state["history_days"], 13) + 1,
+        "atr_days": atr_days,
         "from_high": from_high,
         "swing": swing,
         "swing_moves": swing_moves,
@@ -435,6 +443,9 @@ def evaluate(state, quote):
         "orb_mode": orb_mode,
         "breakout": breakout,
         "checks": checks,
+        "ema21_ready": ema21_ready,
+        "atr_ready": atr_ready,
+        "strength_ready": strength_ready,
         "episodic_pivot": episodic_pivot,
         # Informational only: price above live EMA10/EMA21 and both EMAs rising on completed bars.
         "momentum_stock": bool(

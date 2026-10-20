@@ -5,14 +5,14 @@ STOCK PATTERN LAB - BUY ALERT RULES
 A broad strength-and-breakout signal. All required checks
 must qualify together:
 
-- Price above developing EMA21, except through listing day 21.
+- Price above developing EMA21 after 21 completed trading sessions; earlier sessions are warm-up.
 - Price above the previous trading day's close.
 - Price above the previous-session breakout reference,
   including a 0.50% buffer.
 - Price strictly above Rs 20.
 - Turnover/liquidity strictly above Rs 20 Cr.
-- Within 20% of the 52-week high; within 15% for IPOs.
-- ATR above 3.49%, except IPOs.
+- Within 15% of the 52-week high before 63 completed sessions; within 20% thereafter.
+- ATR >3.49% after 14 ATR inputs are available; earlier sessions are warm-up.
 - Opening-range breakout confirmed on at least one of:
   3m, 5m, 15m, 30m or 60m.
 - Previous-day-low stop distance must be positive and
@@ -25,12 +25,17 @@ At least one activity confirmation is required:
 - Price up at least 4% from today's open; OR
 - Today's cumulative volume >9 million shares.
 
-Non-IPO stocks also need at least one swing-strength move:
+After 63 completed sessions, Momentum also needs at least one
+swing-strength move:
 1W >10%, 1M >19%, 3M >29%, 6M >49%,
 1Y >99%, 18M >149%, or 24M >199%.
 
 Maximum indicated position size is capped at 25%,
 using a 1% portfolio-risk calculation.
+
+IPO universe membership uses actual listing date within
+IPO_LOOKBACK_MONTHS (default 12 months). This setting does not
+change alert exemptions; live warm-ups use completed session age.
 
 
 2. EPISODIC PIVOT BUY - EP BUY
@@ -42,10 +47,12 @@ An independent opening-gap signal:
 - Pre-open IEP above the gap threshold nominates a
   candidate; IEP is indicative, not a traded price.
 - After 09:15 IST, a fresh regular-session quote confirms
-  the actual opening gap and price above developing EMA21.
+  the actual opening gap. EMA21 is required after 21 completed
+  sessions; earlier sessions are EMA warm-up.
 - Price strictly above Rs 20.
 - Turnover/liquidity strictly above Rs 20 Cr.
-- ATR strictly above EP_MIN_ATR_PCT (default 3.0%), except IPOs.
+- ATR strictly above EP_MIN_ATR_PCT (default 3.0%) after
+  14 ATR inputs are available; earlier sessions are warm-up.
 
 No Momentum ORB, volume-surge, swing-strength, near-high
 or 8% stop-distance requirement.
@@ -74,9 +81,11 @@ Close confirmation uses completed one-minute candles;
 it does not wait for another full range-sized candle.
 
 The qualifying price must also be:
-- Above developing EMA21.
+- Above developing EMA21 after 21 completed sessions; before
+  then EMA21 is in warm-up.
 - Strictly above Rs 20.
-- Supported by turnover/liquidity above Rs 20 Cr.
+- Supported by turnover/liquidity above Rs 20 Cr using available
+  history, up to the 50-session average.
 
 No additional Momentum volume-surge, ATR, swing-strength,
 near-high or 8% stop-distance requirement.
@@ -111,10 +120,19 @@ COMMON NOTES
   per monitoring run.
 - Every stock alert includes Sector; unavailable data
   appears as NA and does not block the signal.
-- Live BUY alerts show signal counts for today and the last
-  7 calendar days (IST), including the current alert.
-  EP, Momentum and every radar timeframe count separately
-  toward the same stock's combined total.
+- Intraday Alert Count is the number of live alert events for
+  the stock on the current IST date; it resets next day.
+- Daily Alert Count is the number of distinct sessions with
+  any alert in the latest 7 trading days. Multiple same-day
+  EP, Momentum, and radar alerts count as one alert-day.
+- If the session calendar is unavailable, Daily Alert Count
+  is NA. The count includes only recorded signal events.
+- The live scanner persists completed NIFTY 500 session dates
+  in artifacts/trading_sessions.csv for this calculation.
+- Market-breadth trend compares the latest 7 stored trading
+  sessions for stocks above 20/50/200-day MAs. It is marked
+  provisional with 2-6 sessions and unavailable below 2;
+  a full trend needs 7 successful session records.
 - These counts measure recorded signals, not guaranteed
   Telegram deliveries or a proven increase in win probability.
   History starts when tracking is deployed; older events may
@@ -126,7 +144,7 @@ COMMON NOTES
   per stock per trading day. Later signals do not replace it.
 - End-of-day sector counts include all signal events.
 - Swing CSV and Excel keep Sector as a separate column and
-  include recorded entry-day and rolling 7-day signal counts.
+  show Intraday Alert Count and Daily Alert Count (7 Trading Days).
 - The Excel Dashboard groups outcomes by entry market:
   Bull, Bear, Choppy, Mixed, NA, or Unknown. Win/loss/breakeven and
   win rate use fully exited trades with usable returns only.

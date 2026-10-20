@@ -60,7 +60,6 @@ class EpRadarTests(unittest.TestCase):
             bars["close"] = [19.0] * 60 + [20.0] * 2
             live_engine.update_intraday(state, bars, self.start + timedelta(minutes=61))
             self.assertEqual(state["ep_orb_breakouts"], {})
-
         with self.subTest("turnover_gate"):
             state = live_engine.build_state("TEST", self.history, None)
             with patch.object(settings, "MIN_TURNOVER_CR", 1e9):
@@ -82,6 +81,12 @@ class EpRadarTests(unittest.TestCase):
                 state["ep_orb_breakouts"][3]["candle_time"],
                 (self.start + timedelta(minutes=61)).isoformat(),
             )
+
+    def test_radar_ema21_gate_waits_for_21_completed_sessions(self):
+        state = dict(self.state, history_days=20, ema21=200.0)
+        self.assertTrue(live_engine._ep_radar_quality_passes(state, 110.0, 4_000_000.0))
+        state["history_days"] = 21
+        self.assertFalse(live_engine._ep_radar_quality_passes(state, 110.0, 4_000_000.0))
 
     def test_not_before_breakout_minute_completes_and_no_duplicate_breakouts(self):
         bars = self.candles()
@@ -321,7 +326,8 @@ class EpRadarTests(unittest.TestCase):
         self.assertTrue(all(row["sector"] == "Refineries" for row in rows))
         radar = [text for text in messages if "EP RADAR ORB BUY" in text]
         for count, text in enumerate(radar, start=1):
-            self.assertIn(f"Alert History: {count} today | {count} in last 7 days", text)
+            self.assertIn(f"Intraday Alert Count: {count} today", text)
+            self.assertIn("Daily Alert Count: NA", text)
 
     def test_ep_momentum_and_radar_alerts_remain_independent_and_first_ep_is_entry(self):
         rows, messages = self.run_monitor(gap_only=False)

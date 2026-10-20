@@ -1,8 +1,12 @@
 import io
 import re
-from datetime import date
+from datetime import datetime
+from zoneinfo import ZoneInfo
 import pandas as pd
 import requests
+from config import settings
+
+IST = ZoneInfo("Asia/Kolkata")
 
 INDEX_URLS = {
     "NIFTY500": "https://www.niftyindices.com/IndexConstituent/ind_nifty500list.csv",
@@ -10,7 +14,21 @@ INDEX_URLS = {
     "MICROCAP250": "https://www.niftyindices.com/IndexConstituent/ind_niftymicrocap250_list.csv",
     "SMALLCAP250": "https://www.niftyindices.com/IndexConstituent/ind_niftysmallcap250list.csv",
 }
-IPO_START = date(2026, 1, 1)
+
+def ipo_cutoff_date(today=None):
+    today = pd.Timestamp(today or datetime.now(IST).date())
+    return (today - pd.DateOffset(months=settings.IPO_LOOKBACK_MONTHS)).date()
+
+
+def recent_ipo_listing_dates(listing_dates, today=None):
+    today_date = pd.Timestamp(today or datetime.now(IST).date()).date()
+    cutoff = ipo_cutoff_date(today_date)
+    return {
+        symbol: parsed.date().isoformat()
+        for symbol, value in listing_dates.items()
+        for parsed in [pd.to_datetime(value, errors="coerce")]
+        if pd.notna(parsed) and cutoff <= parsed.date() <= today_date
+    }
 
 def _headers():
     return {
@@ -32,19 +50,19 @@ def _index_symbols(url):
         if str(s).strip()
     }
 
-def _ipo_symbols():
+def _listed_ipo_dates():
     """
     Fetch listed IPOs from Upstox's supported IPO API.
 
-    We page through all listed IPOs, keep IPOs whose bidding started on/after
-    IPO_START, and later let load_nse_equities() restrict them to NSE_EQ
-    instruments. This replaces the unreliable NSE public IPO-tracker URL.
+    We page through listed IPOs and retain their listing dates. The caller
+    applies the configured rolling window for universe membership and live
+    IPO exemptions. This replaces the unreliable NSE public IPO URL.
     """
     from scanner.upstox import _request_json
 
     url = "https://api.upstox.com/v2/ipos"
 
-    symbols = set()
+    listing_dates = {}
     page = 1
     records = 30
 
@@ -60,16 +78,14 @@ def _ipo_symbols():
 
         for item in page_data:
             symbol = str(item.get("symbol") or "").strip().upper()
-            bidding_start = str(
-                item.get("bidding_start_date") or ""
-            ).strip()
+            listing_date = str(item.get("listing_date") or "").strip()
 
-            if not symbol or not bidding_start:
+            if not symbol or not listing_date:
                 continue
 
-            parsed = pd.to_datetime(bidding_start, errors="coerce")
-            if pd.notna(parsed) and parsed.date() >= IPO_START:
-                symbols.add(symbol)
+            parsed = pd.to_datetime(listing_date, errors="coerce")
+            if pd.notna(parsed):
+                listing_dates[symbol] = parsed.date().isoformat()
 
         page_info = payload.get("meta_data", {}).get("page", {})
         total_pages = int(page_info.get("total_pages") or page)
@@ -79,10 +95,11 @@ def _ipo_symbols():
 
         page += 1
 
-    return symbols
+    return listing_dates
 
-def load_requested_universe():
+def load_requested_universe(today=None):
     symbols = set()
+    ipo_listing_dates = {}
     failures = []
 
     for name, url in INDEX_URLS.items():
@@ -94,9 +111,13 @@ def load_requested_universe():
             failures.append(f"{name}: {exc}")
 
     try:
-        ipo = _ipo_symbols()
-        symbols.update(ipo)
-        print(f"Universe recent IPOs since 2026-01-01: {len(ipo)} symbols")
+        ipo_listing_dates = _listed_ipo_dates()
+        recent_ipos = recent_ipo_listing_dates(ipo_listing_dates, today)
+        cutoff = ipo_cutoff_date(today)
+        symbols.update(recent_ipos)
+        print(
+            f"Universe IPOs listed since {cutoff}: {len(recent_ipos)} symbols"
+        )
     except Exception as exc:
         failures.append(f"IPO: {exc}")
 
@@ -109,4 +130,4 @@ def load_requested_universe():
         raise RuntimeError("Requested universe could not be loaded from NSE/Nifty sources.")
 
     print(f"Final requested universe after de-duplication: {len(symbols)} symbols")
-    return symbols
+    return symbols, ipo_listing_dates

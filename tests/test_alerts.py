@@ -134,7 +134,8 @@ class TelegramMessageTests(unittest.TestCase):
 
     def test_alert_frequency_line_is_preserved_when_long_message_splits(self):
         message = ("EP RADAR ORB BUY - TEST\nSector: " + "X" * 8000
-                   + "\nAlert History: 2 today | 3 in last 7 days")
+                   + "\nIntraday Alert Count: 2 today"
+                   + "\nDaily Alert Count: 2 of last 7 trading days")
         alerts.send(message, chart_symbol="TEST")
         self.assert_text_parts(message, chart_symbol="TEST")
 

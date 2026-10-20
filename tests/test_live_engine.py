@@ -184,8 +184,8 @@ class MomentumTests(unittest.TestCase):
             self.state["rvol_prev19_volume"] = 9 * volume - 1e6
             self.assertTrue(live_engine.evaluate(self.state, self.quote)["checks"]["volume_surge"])
 
-    def test_ipo_exemptions_and_listing_high(self):
-        self.state = live_engine.build_state("IPO", self.history.iloc[:10], None)
+    def test_short_history_warmups_and_listing_high(self):
+        self.state = live_engine.build_state("RECENT", self.history.iloc[:10], None)
         self.state.update({"orb_highs": {3: 105}, "orb_close_breaks": {3: True}, "year_low": 100,
                            "prior_tr13": 0, "ema21": 200, "prev_low": 109.0})
         result = live_engine.evaluate(self.state, self.quote)
@@ -196,7 +196,7 @@ class MomentumTests(unittest.TestCase):
         message = live_monitor.fmt_alert("BUY", result)
         self.assertIn("ATR 11d ", message)
         self.assertIn("Turnover 11d avg Rs ", message)
-        self.assertIn("Strength: IPO exempt", message)
+        self.assertIn("Strength: warm-up (10/63 completed sessions)", message)
         self.assertIn("ATR 11d ", live_monitor.fmt_alert("EP", result))
         self.assertIn("Perf: 1W +10.0%", live_monitor.fmt_alert("EP", result))
         short = live_engine.evaluate(live_engine.build_state("NEW", self.history.iloc[:3], None), self.quote)
@@ -204,11 +204,31 @@ class MomentumTests(unittest.TestCase):
         self.state["year_high"] = 130
         self.assertFalse(live_engine.evaluate(self.state, self.quote)["checks"]["near_high"])
 
-    def test_ema_exemption_ends_after_listing_day21(self):
-        self.state.update({"history_days": 20, "is_ipo": True, "ema21": 200})
+    def test_session_warmups_for_ema_atr_strength_and_near_high(self):
+        self.state.update({
+            "history_days": 20, "ema21": 200, "prior_tr13": 0,
+            "year_high": 130,
+            "swing_move_references": dict.fromkeys(self.state["swing_move_references"]),
+        })
         self.assertTrue(live_engine.evaluate(self.state, self.quote)["checks"]["trend"])
         self.state["history_days"] = 21
         self.assertFalse(live_engine.evaluate(self.state, self.quote)["checks"]["trend"])
+
+        self.state["history_days"] = 12
+        with patch.object(settings, "MIN_ATR_PCT", 100.0):
+            self.assertTrue(live_engine.evaluate(self.state, self.quote)["checks"]["volatility"])
+        self.state["history_days"] = 13
+        with patch.object(settings, "MIN_ATR_PCT", 100.0):
+            self.assertFalse(live_engine.evaluate(self.state, self.quote)["checks"]["volatility"])
+
+        self.state["history_days"] = 62
+        result = live_engine.evaluate(self.state, self.quote)
+        self.assertTrue(result["checks"]["strength"])
+        self.assertFalse(result["checks"]["near_high"])
+        self.state["history_days"] = 63
+        result = live_engine.evaluate(self.state, self.quote)
+        self.assertFalse(result["checks"]["strength"])
+        self.assertTrue(result["checks"]["near_high"])
 
     def test_non_ipo_strength_atr_and_high_filters(self):
         no_swing_moves = dict.fromkeys(self.state["swing_move_references"])
@@ -265,6 +285,26 @@ class MomentumTests(unittest.TestCase):
         self.assertTrue(result["episodic_pivot"])
         self.assertFalse(result["buy"])
         self.assertFalse(result["checks"]["orb"])
+
+    def test_ep_ema_and_atr_gates_activate_after_their_session_warmups(self):
+        live_engine.update_intraday(self.state, self.ep_candles, self.ep_start + timedelta(minutes=1))
+        self.state.update({"history_days": 12, "ema21": 200.0, "prior_tr13": 0.0})
+        with patch.object(settings, "EP_MIN_ATR_PCT", 100.0):
+            early = live_engine.evaluate(self.state, self.state["ep_quote"])
+        self.assertEqual(early["atr_days"], 13)
+        self.assertTrue(early["episodic_pivot"])
+
+        self.state["history_days"] = 13
+        with patch.object(settings, "EP_MIN_ATR_PCT", 100.0):
+            atr_ready = live_engine.evaluate(self.state, self.state["ep_quote"])
+        self.assertEqual(atr_ready["atr_days"], 14)
+        self.assertFalse(atr_ready["episodic_pivot"])
+
+        self.state.update({"history_days": 21, "ema21": 200.0})
+        with patch.object(settings, "EP_MIN_ATR_PCT", -1.0):
+            ema_ready = live_engine.evaluate(self.state, self.state["ep_quote"])
+        self.assertTrue(ema_ready["ema21_ready"])
+        self.assertFalse(ema_ready["episodic_pivot"])
 
     def test_ep_waits_for_actual_completed_opening_candle(self):
         self.quote["ohlc"]["open"] = 106.0

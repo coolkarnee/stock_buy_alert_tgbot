@@ -66,12 +66,12 @@
   <div class="table-wrap"><table>
     <thead><tr><th>Condition</th><th>Requirement</th></tr></thead>
     <tbody>
-      <tr><td>Trend</td><td>Price above developing EMA21, except through listing day 21.</td></tr>
+      <tr><td>Trend</td><td>Price above developing EMA21 after 21 completed sessions; earlier sessions are warm-up.</td></tr>
       <tr><td>Volume</td><td>RVOL &gt;1.30x, pocket pivot, first-30-minute surge, price up ≥4% from open, or daily volume &gt;9M.</td></tr>
       <tr><td>Momentum</td><td>Price above yesterday's close.</td></tr>
       <tr><td>Breakout</td><td>Price above the previous-session reference with a 0.50% buffer.</td></tr>
-      <tr><td>Near high</td><td>Within 20% of the 52-week high, or 15% for IPOs.</td></tr>
-      <tr><td>Volatility</td><td>ATR14 &gt;3.49%, except IPOs.</td></tr>
+      <tr><td>Near high</td><td>Within 15% before 63 completed sessions; within 20% thereafter.</td></tr>
+      <tr><td>Volatility</td><td>ATR14 &gt;3.49% after 14 ATR inputs are available; earlier sessions are warm-up.</td></tr>
       <tr><td>Price / liquidity</td><td>Price &gt;₹20 and turnover &gt;₹20 Cr.</td></tr>
       <tr><td>Opening range</td><td>Break at least one completed 3m, 5m, 15m, 30m, or 60m range.</td></tr>
       <tr><td>SL risk</td><td>Previous-day-low distance is positive and ≤8%.</td></tr>
@@ -79,7 +79,8 @@
   </table></div>
 
   <h2>Multi-period swing strength</h2>
-  <p>The old 30% rise-from-52-week-low rule is removed. At least one close-to-close move must be strictly greater than its threshold. IPOs skip this condition.</p>
+  <p class="note"><code>IPO_LOOKBACK_MONTHS</code> (default 12) controls universe membership only. Live warm-ups apply to every stock based on completed sessions: ATR after 14 inputs, EMA21 after 21 sessions, and Momentum swing strength/20% near-high rules after 63 sessions. Before 63 sessions, Momentum uses a 15% near-high limit and skips swing strength.</p>
+  <p>The old 30% rise-from-52-week-low rule is removed. At least one close-to-close move must be strictly greater than its threshold. Momentum strength checks begin after 63 completed sessions.</p>
   <div class="table-wrap"><table>
     <thead><tr><th>Period</th><th>Reference close</th><th>Required move</th></tr></thead>
     <tbody>
@@ -103,17 +104,17 @@
   <ul>
     <li>Day's open is strictly more than 4.5% above the previous trading day's close.</li>
     <li>Pre-open IEP strictly more than 4.5% above yesterday's close nominates a candidate; IEP is indicative, not a traded price.</li>
-    <li>After 09:15 IST, a fresh regular-session quote confirms the actual opening gap and a price above developing EMA21.</li>
+    <li>After 09:15 IST, a fresh regular-session quote confirms the actual opening gap. Price must be above developing EMA21 after 21 completed sessions; earlier sessions are warm-up.</li>
     <li>Price is strictly above ₹20.</li>
-    <li>ATR is strictly above EP_MIN_ATR_PCT (default 3.0%), except IPOs.</li>
+    <li>ATR is strictly above EP_MIN_ATR_PCT (default 3.0%) after 14 ATR inputs are available; earlier sessions are warm-up.</li>
     <li>Turnover/liquidity is above ₹20 Cr.</li>
   </ul>
   <p class="note">EP alerts do not require Momentum BUY volume confirmation, momentum, breakout, rally-strength, near-high, or opening-range conditions.</p>
-  <p>The scanner connects at 09:00 IST and evaluates pre-open IEP candidates using actual regular-session quotes after the open. A candidate can alert later if EMA21, ATR, or liquidity confirms later. Stocks without usable pre-open IEP can still be detected by the regular post-open completed-candle scan.</p>
+  <p>The scanner connects at 09:00 IST and evaluates pre-open IEP candidates using actual regular-session quotes after the open. A candidate can alert later if an active EMA21, ATR, or liquidity check only passes later. Stocks without usable pre-open IEP can still be detected by the regular post-open completed-candle scan.</p>
 
   <h2>EP radar: a simpler gap-and-breakout watch</h2>
   <p>Every stock with a verified opening gap strictly above 4.5% enters this radar, even if the full EP BUY conditions fail. Its opening 3-minute, 5-minute, 15-minute, 30-minute and 1-hour highs become five separate reference levels.</p>
-  <p>The radar uses the same ORB confirmation choice as Momentum: <strong>close</strong> waits for a completed candle close strictly above the range high; <strong>spot</strong> uses the live price strictly above the high after the range forms. A touch or equal price is not enough. The qualifying price must also be above EMA21, above Rs 20, and satisfy turnover above Rs 20 Cr. Other Momentum filters are not required for this scan. Missing opening candles must become available before a range can qualify.</p>
+  <p>The radar uses the same ORB confirmation choice as Momentum: <strong>close</strong> waits for a completed candle close strictly above the range high; <strong>spot</strong> uses the live price strictly above the high after the range forms. A touch or equal price is not enough. Price must be above developing EMA21 after 21 completed sessions; earlier sessions are EMA warm-up. Price &gt;Rs 20 and turnover &gt;Rs 20 Cr apply from the first session, using available history. Other Momentum filters are not required for this scan. Missing opening candles must become available before a range can qualify.</p>
   <p>The current default is close confirmation using completed one-minute candles, not a requirement to wait for another full 1-hour candle. Spot confirmation does not wait for a breakout candle to close. Each of the five ranges alerts once per stock per session. Full EP and Momentum BUY alerts stay independent.</p>
   <p>The 30-minute range forms from 09:15 through 09:44 IST. Its earliest spot confirmation is after 09:45; its earliest close confirmation is around 09:46, subject to data availability and the other radar conditions.</p>
   <p><a href="telegram-trader-rules.txt">Download the copy-paste Telegram trader rules sheet</a>.</p>
@@ -142,7 +143,7 @@ Max Position 20.00%
   <p>These examples illustrate the layout only. They are not actual stock signals. Both alert types include a button to open the stock's TradingView chart.</p>
 
   <h2>End-of-day review: where did today's alerts come from?</h2>
-  <p>Every live BUY alert also shows how many signals the stock has generated today and in the last seven calendar days, including the current signal. EP, Momentum and each radar timeframe count separately toward the combined total. This is recorded signal frequency, not a proven increase in the chance of profit. History begins when tracking is deployed; missing older events are not reconstructed from first-entry trades.</p>
+  <p>Every live BUY alert shows <strong>Intraday Alert Count</strong> (all recorded alert events for the stock today; resets next IST day) and <strong>Daily Alert Count</strong> (distinct sessions with one or more alerts among the latest seven trading days). EP, Momentum, and each radar timeframe count separately toward the intraday total; multiple events on one session count as one daily alert day. If the trading-session calendar is unavailable, Daily Alert Count is NA. These are recorded signals, not winning-trade counts.</p>
   <p>Daily and swing returns use the <strong>first alert's buy price and time for each stock that day</strong>. Later EP, Momentum, or radar messages are confirmations, not extra trades or replacement entry prices. If Momentum arrives first, its entry is used; if EP or a radar breakout arrives first, that entry is used.</p>
   <p>After stock-by-stock performances, the daily report groups all signal events by sector. Each sector shows total alerts, Momentum BUY alerts, EP alerts, distinct stocks, and EP radar ORB alerts, including events whose price-performance data is unavailable.</p>
   <pre>SECTOR ALERT BREAKDOWN
@@ -163,10 +164,11 @@ Software - Application: 1 alerts | 1 Momentum BUY | 0 EP | 1 distinct stocks | 0
     <li><strong>Oversold:</strong> 20% or fewer above their 200-day MA; <strong>Overbought:</strong> 80% or more.</li>
   </ul>
   <p><strong>Bull Market</strong> means NIFTY 500 is Uptrending and breadth is Broader Bull; <strong>Bear Market</strong> means it is Downtrending and breadth is Broader Bear. NIFTY 500 chopping is <strong>Choppy Market</strong>; disagreement between the index and breadth is <strong>Mixed Market</strong>. Missing inputs display NA while retaining the other available reading. Context is informational and does not block BUY alerts. Live breadth is populated after the market-open TradingView scrape; earlier alerts show Stocks above 200 MA: NA.</p>
+  <p>The market-breadth alert tracks the 20-day, 50-day, and 200-day moving-average percentages. Its trend compares the latest seven recorded trading sessions; with 2–6 sessions it is marked provisional, and with fewer than two it says trend unavailable with the number of sessions recorded. A workflow run tomorrow after the first stored session can therefore show a provisional 2/7 trend; the full trend requires seven successful trading-session records.</p>
 
   <h2>Persistent performance sheet</h2>
   <p>The Excel Dashboard compares outcomes by the combined market context <strong>at entry</strong>: Bull, Bear, Choppy, Mixed, NA and Unknown. The detailed NIFTY trend and breadth percentage remain in each trade's Market Context field. Only a combined Bull Market entry uses the +15% / 20% profit booking rule; other, mixed, or unavailable contexts use +10% / 30%.</p>
-  <p>Sector remains a separate trade column. Two additional columns show recorded signals on the entry date and over that date plus the preceding six calendar days. They include later same-day confirmations without changing the first entry price; legacy entries without signal coverage show NA.</p>
+  <p>Sector remains a separate trade column. Two count columns show Intraday Alert Count and Daily Alert Count (7 Trading Days) at the first entry. They include later same-day confirmations without changing the first entry price; legacy entries without session-calendar coverage show NA for the daily count.</p>
   <p>The swing report follows the first alert per stock per trading day beyond entry. Later same-day signals do not create extra swing rows or change the entry. The Excel workbook is sent to Telegram with an overall dashboard and weekly trade sections. Every trade row includes its sector, first entry price, previous-day-low stop, latest close, performance, and status. Newly recorded partial or full exits are also announced with sector context.</p>
   <p>In Bear or Choppy entry context, reaching +10% books 30% of the position; in Bull context, reaching +15% books 20%. The remaining position is monitored using breakeven and daily closing-basis EMA rules. A 10 EMA close break exits half of the remaining size; a 20 EMA close break or breakeven break exits the remainder. These are retrospective calculations, not executed orders, and actual trading results may differ.</p>
   <p>Recorded sector labels stay with the alert. Older entries without an sector are filled where the provider has a classification; those backfilled labels describe the company now, not necessarily at the historic entry date.</p>

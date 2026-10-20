@@ -12,31 +12,61 @@ from scanner.signal_history import IST, SignalHistory
 
 
 class SignalHistoryTests(unittest.TestCase):
+    def test_legacy_swing_counts_migrate_without_claiming_trading_day_history(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "swing.csv"
+            path.write_text(
+                "Alert Type,Ticker Name,Date Time,Buy Price,Signals On Entry Day,Signals In Last 7 Days\n"
+                "EP,TEST,2026-10-19T09:16:00+05:30,100,4,6\n",
+                encoding="utf-8",
+            )
+            with patch.object(swing_performance, "OUTPUT_FILE", path):
+                row = next(iter(swing_performance._read_existing().values()))
+            self.assertEqual(row["Intraday Alert Count"], "4")
+            self.assertEqual(row["Daily Alert Count (7 Trading Days)"], "NA")
+            self.assertNotIn("Signals In Last 7 Days", row)
+
     def test_rolling_counts_all_types_restart_dedup_and_ist_boundaries(self):
         with TemporaryDirectory() as directory:
             path = Path(directory) / "history.csv"
-            history = SignalHistory(path)
+            sessions = path.with_name("trading_sessions.csv")
+            history = SignalHistory(path, sessions)
+            history.record_sessions([
+                f"{day}T09:15:00+05:30"
+                for day in ("2026-10-09", "2026-10-12", "2026-10-13", "2026-10-14",
+                            "2026-10-15", "2026-10-16", "2026-10-19", "2026-10-20")
+            ])
             for timestamp, kind in (
-                ("2026-10-11T09:16:00+05:30", "EP"),
+                ("2026-10-09T09:16:00+05:30", "EP"),
                 ("2026-10-12T09:16:00+05:30", "EP"),
-                ("2026-10-18T09:16:00+05:30", "EP"),
-                ("2026-10-18T09:17:00+05:30", "BUY"),
+                ("2026-10-13T09:16:00+05:30", "EP"),
+                ("2026-10-19T09:16:00+05:30", "EP"),
+                ("2026-10-19T09:17:00+05:30", "BUY"),
             ):
                 message = history.record("test", kind, datetime.fromisoformat(timestamp))
-            self.assertIn("2 today | 3 in last 7 days", message)
-            restarted = SignalHistory(path)
-            self.assertEqual(restarted.counts("TEST", datetime(2026, 10, 18).date()), (2, 3))
+            self.assertIn("Intraday Alert Count: 2 today", message)
+            self.assertIn("Daily Alert Count: 4 of last 7 trading days", message)
+            restarted = SignalHistory(path, sessions)
+            self.assertEqual(restarted.counts("TEST", datetime(2026, 10, 19).date()), (2, 4))
             # Importing the same artifact again does not count events twice.
             restarted.extend(history.events)
-            self.assertEqual(len(restarted.events), 4)
+            self.assertEqual(len(restarted.events), 5)
             message = restarted.record(
-                "TEST", "EP_ORB_30M", datetime.fromisoformat("2026-10-18T09:46:00+05:30"),
+                "TEST", "EP_ORB_30M", datetime.fromisoformat("2026-10-19T09:46:00+05:30"),
             )
-            self.assertIn("3 today | 4 in last 7 days", message)
-            restarted.record("OTHER", "BUY", datetime(2026, 10, 18, 10, tzinfo=IST))
-            restarted.record("TEST", "EP", datetime.fromisoformat("2026-10-18T20:00:00+00:00"))
-            self.assertEqual(restarted.counts("TEST", datetime(2026, 10, 18).date()), (3, 4))
-            self.assertEqual(restarted.counts("TEST", datetime(2026, 10, 19).date()), (1, 4))
+            self.assertIn("Intraday Alert Count: 3 today", message)
+            self.assertIn("Daily Alert Count: 4 of last 7 trading days", message)
+            restarted.record("OTHER", "BUY", datetime(2026, 10, 19, 10, tzinfo=IST))
+            restarted.record("TEST", "EP", datetime.fromisoformat("2026-10-19T20:00:00+00:00"))
+            self.assertEqual(restarted.counts("TEST", datetime(2026, 10, 19).date()), (3, 4))
+            self.assertEqual(restarted.counts("TEST", datetime(2026, 10, 20).date()), (1, 4))
+
+    def test_daily_alert_count_is_na_without_trading_session_calendar(self):
+        with TemporaryDirectory() as directory:
+            history = SignalHistory(Path(directory) / "history.csv")
+            message = history.record("TEST", "EP", datetime(2026, 10, 20, 9, 16, tzinfo=IST))
+            self.assertIn("Intraday Alert Count: 1 today", message)
+            self.assertIn("Daily Alert Count: NA", message)
 
     def test_invalid_history_is_reported_not_silently_reset(self):
         with TemporaryDirectory() as directory:
@@ -49,11 +79,16 @@ class SignalHistoryTests(unittest.TestCase):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             history_path = root / "history.csv"
-            history = SignalHistory(history_path)
+            history = SignalHistory(history_path, root / "trading_sessions.csv")
+            history.record_sessions([
+                f"{day}T09:15:00+05:30"
+                for day in ("2026-10-09", "2026-10-12", "2026-10-13", "2026-10-14",
+                            "2026-10-15", "2026-10-16", "2026-10-19")
+            ])
             history.record("TEST", "EP", datetime(2026, 10, 16, 9, 16, tzinfo=IST))
             alerts = [{
                 "Alert ID": kind, "Ticker Name": "TEST", "Buy Price": price,
-                "Date Time": f"2026-10-18T{time}+05:30", "Alert Type": kind,
+                "Date Time": f"2026-10-19T{time}+05:30", "Alert Type": kind,
                 "Sector": "Refineries", "Market Context": "Bull Market",
             } for kind, price, time in (
                 ("EP", "100", "09:16:00"), ("BUY", "110", "09:20:00"),
@@ -80,8 +115,8 @@ class SignalHistoryTests(unittest.TestCase):
             row = frame.iloc[0]
             self.assertEqual(row["Buy Price"], "100")
             self.assertEqual(row["Sector"], "Refineries")
-            self.assertEqual(row["Signals On Entry Day"], 3)
-            self.assertEqual(row["Signals In Last 7 Days"], 4)
+            self.assertEqual(row["Intraday Alert Count"], 3)
+            self.assertEqual(row["Daily Alert Count (7 Trading Days)"], 2)
 
 
 class RegimeDashboardTests(unittest.TestCase):
@@ -110,7 +145,7 @@ class RegimeDashboardTests(unittest.TestCase):
                 "Ticker Name": f"TEST{index}", "Alert Date": "2026-10-18",
                 "Alert Time": "09:16:00", "Market Context": regime,
                 "Status": status, "Performance %": value, "Sector": "Refineries",
-                "Signals On Entry Day": 2, "Signals In Last 7 Days": 3,
+                "Intraday Alert Count": 2, "Daily Alert Count (7 Trading Days)": 3,
             })
             rows.append(row)
         with TemporaryDirectory() as directory:
@@ -128,8 +163,8 @@ class RegimeDashboardTests(unittest.TestCase):
             self.assertEqual(sheet["K22"].value, 1)
             detail = workbook["Swing Performance"]
             self.assertEqual(detail["P3"].value, "Sector")
-            self.assertEqual(detail["Q3"].value, "Signals On Entry Day")
-            self.assertEqual(detail["R3"].value, "Signals In Last 7 Days")
+            self.assertEqual(detail["Q3"].value, "Intraday Alert Count")
+            self.assertEqual(detail["R3"].value, "Daily Alert Count (7 Trading Days)")
             workbook.close()
 
     def test_empty_dashboard_has_all_regimes_and_no_fake_win_rate(self):

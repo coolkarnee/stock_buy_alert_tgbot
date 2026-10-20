@@ -14,7 +14,7 @@ from scanner.alerts import send, send_photo
 TRADINGVIEW_INDIA_URL = "https://www.tradingview.com/markets/india/#stocks"
 BREADTH_HISTORY_FILE = Path("artifacts/market_breadth.csv")
 BREADTH_HISTORY_DAYS = 61
-BREADTH_TREND_SESSIONS = 5
+BREADTH_TREND_SESSIONS = 7
 BREADTH_FLAT_POINTS = 3
 MA_LABELS = ("20-day MA", "50-day MA", "200-day MA")
 
@@ -186,10 +186,18 @@ def breadth_judgement(values):
 
 
 def breadth_trend(history, labels):
-    recent = history.tail(BREADTH_TREND_SESSIONS + 1)
+    recent = history.tail(BREADTH_TREND_SESSIONS)
+    if recent.empty:
+        return [f"Trend unavailable (0/{BREADTH_TREND_SESSIONS} trading sessions recorded)."]
     if len(recent) < 2:
-        return []
-    lines = [f"Trend (last {len(recent)} sessions):"]
+        return [
+            f"Trend unavailable ({len(recent)}/{BREADTH_TREND_SESSIONS} trading sessions recorded; "
+            "need at least 2)."
+        ]
+    qualifier = "" if len(recent) == BREADTH_TREND_SESSIONS else "; provisional"
+    lines = [
+        f"Trend (last {len(recent)}/{BREADTH_TREND_SESSIONS} trading sessions{qualifier}):"
+    ]
     for label in labels:
         series = pd.to_numeric(recent[label], errors="coerce").dropna()
         if len(series) < 2:

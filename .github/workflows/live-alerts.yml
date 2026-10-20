@@ -72,7 +72,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          for file in artifacts/market_breadth.csv artifacts/signal_history.csv; do
+          for file in artifacts/market_breadth.csv artifacts/signal_history.csv artifacts/trading_sessions.csv; do
             if [ -f "$file" ]; then
               git add "$file"
             fi

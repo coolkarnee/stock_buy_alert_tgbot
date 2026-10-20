@@ -40,8 +40,8 @@ OUTPUT_COLUMNS = [
     "Status",
     "Market Context",
     "Sector",
-    "Signals On Entry Day",
-    "Signals In Last 7 Days",
+    "Intraday Alert Count",
+    "Daily Alert Count (7 Trading Days)",
 ]
 
 COLUMN_DESCRIPTIONS = [
@@ -61,8 +61,8 @@ COLUMN_DESCRIPTIONS = [
     "Trade open, Partial exit, Full exit, or a data status.",
     "Combined NIFTY 500 trend and above-200-MA breadth at entry; includes raw values or NA.",
     "Company sector from Upstox company profile by ISIN; NA if not supplied.",
-    "All recorded live signals for this stock on its entry date; not extra trades.",
-    "All recorded live signals over the entry date and preceding six IST dates.",
+    "All recorded live alert events for this stock on the entry date; resets next session.",
+    "Distinct trading sessions with at least one recorded alert in the latest seven sessions.",
 ]
 
 VISIBLE_COLUMNS = [column for column in OUTPUT_COLUMNS if column != "Alert ID"]
@@ -189,7 +189,7 @@ def _write_excel(frame):
         "A": 8, "B": 20, "C": 18, "D": 13, "E": 14, "F": 15,
         "G": 13, "H": 13, "I": 13, "J": 14, "K": 28, "L": 13,
         "M": 18, "N": 18, "O": 48, "P": 36,
-        "Q": 24, "R": 26,
+        "Q": 24, "R": 32,
     }
     for column, width in widths.items():
         detail_sheet.column_dimensions[column].width = width
@@ -339,6 +339,12 @@ def _read_existing():
     rows = {}
     with OUTPUT_FILE.open(newline="", encoding="utf-8") as f:
         for row in csv.DictReader(f):
+            if "Intraday Alert Count" not in row:
+                row["Intraday Alert Count"] = row.get("Signals On Entry Day", "NA") or "NA"
+            if "Daily Alert Count (7 Trading Days)" not in row:
+                row["Daily Alert Count (7 Trading Days)"] = "NA"
+            row.pop("Signals On Entry Day", None)
+            row.pop("Signals In Last 7 Days", None)
             if not row.get("Date Time"):
                 row["Date Time"] = " ".join([
                     row.get("Alert Date", ""), row.get("Alert Time", "")
@@ -574,14 +580,17 @@ def run():
                 entry_time.tz_localize(IST) if entry_time.tzinfo is None
                 else entry_time.tz_convert(IST)
             )
-            today_count, rolling_count = signal_history.counts(alert["Ticker Name"], entry_time.date())
-            # Old first-entry rows cannot reconstruct all historical signal events.
-            if today_count:
-                alert["Signals On Entry Day"] = today_count
-                alert["Signals In Last 7 Days"] = rolling_count
+            intraday_count, daily_alert_count = signal_history.counts(
+                alert["Ticker Name"], entry_time.date(),
+            )
+            if intraday_count:
+                alert["Intraday Alert Count"] = intraday_count
+                alert["Daily Alert Count (7 Trading Days)"] = (
+                    daily_alert_count if daily_alert_count is not None else "NA"
+                )
             else:
-                alert.setdefault("Signals On Entry Day", "NA")
-                alert.setdefault("Signals In Last 7 Days", "NA")
+                alert.setdefault("Intraday Alert Count", "NA")
+                alert.setdefault("Daily Alert Count (7 Trading Days)", "NA")
         key = key_by_symbol.get(alert["Ticker Name"])
         if not key:
             output.append({**alert, "Status": "NO INSTRUMENT"})

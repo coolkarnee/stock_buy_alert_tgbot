@@ -91,9 +91,9 @@ def load_instruments():
 
 def load_nse_equities():
     # Universe is the union of the requested NSE broad-market indices plus
-    # all NSE IPO listings from 2026-01-01 onward.
+    # NSE IPO listings within the configured rolling listing-age window.
     from scanner.universe import load_requested_universe
-    symbols = load_requested_universe()
+    symbols, ipo_listing_dates = load_requested_universe()
 
     data = load_instruments()
     instrument_map = {
@@ -105,7 +105,11 @@ def load_nse_equities():
     }
 
     rows = [
-        {'instrument_key': instrument_map[s], 'trading_symbol': s}
+        {
+            'instrument_key': instrument_map[s],
+            'trading_symbol': s,
+            'listing_date': ipo_listing_dates.get(s),
+        }
         for s in sorted(symbols)
         if s in instrument_map
     ]

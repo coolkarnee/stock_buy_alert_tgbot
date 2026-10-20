@@ -7,7 +7,7 @@ from unittest.mock import patch
 import pandas as pd
 from openpyxl import load_workbook
 
-import swing_performance
+from jobs import swing_performance
 from scanner.signal_history import IST, SignalHistory
 
 

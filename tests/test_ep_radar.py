@@ -8,9 +8,7 @@ from unittest.mock import patch
 
 import pandas as pd
 
-import live_monitor
-import performance
-import swing_performance
+from jobs import live_monitor, performance, swing_performance
 from config import settings
 from scanner import live_engine
 from scanner.alert_history import first_daily_alerts
@@ -369,11 +367,13 @@ class FirstEntryPerformanceTests(unittest.TestCase):
         ]
         with TemporaryDirectory() as directory:
             root = Path(directory)
-            with (root / "live_alerts.csv").open("w", newline="", encoding="utf-8") as handle:
+            artifact_dir = root / "artifacts"
+            artifact_dir.mkdir()
+            with (artifact_dir / "live_alerts.csv").open("w", newline="", encoding="utf-8") as handle:
                 writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
                 writer.writeheader()
                 writer.writerows(rows)
-            with (patch.object(performance, "Path", side_effect=lambda name: root / name),
+            with (patch.object(performance, "ARTIFACT_DIR", artifact_dir),
                   patch.object(performance, "load_nse_equities", return_value=pd.DataFrame({
                       "trading_symbol": ["TEST"], "instrument_key": ["KEY"]})),
                   patch.object(performance, "current_day_daily", return_value=pd.DataFrame({
@@ -383,7 +383,7 @@ class FirstEntryPerformanceTests(unittest.TestCase):
                   patch.object(performance, "send") as send,
                   patch("builtins.print")):
                 performance.run()
-            with (root / "performance.csv").open(newline="", encoding="utf-8") as handle:
+            with (artifact_dir / "performance.csv").open(newline="", encoding="utf-8") as handle:
                 result = list(csv.DictReader(handle))
             self.assertEqual(len(result), 1)
             self.assertEqual(result[0]["alert_price"], "100.00")

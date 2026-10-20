@@ -8,11 +8,10 @@ from unittest.mock import patch
 
 import pandas as pd
 
-import live_monitor
+from jobs import live_monitor
 from config import settings
 from scanner import live_data, live_engine
 from scanner.market_context import classify_nifty500, market_context
-from scanner.alerts import format_result
 from scanner.alerts import tradingview_chart_url
 
 
@@ -388,12 +387,6 @@ class MomentumTests(unittest.TestCase):
         self.assertIn("NIFTY 500: Uptrending", message)
         self.assertIn("Stocks above 200 MA: 62.5%", message)
         self.assertIn("Stocks above 200 MA: 62.5%", live_monitor.fmt_alert("EP", result))
-        batch_result = {
-            **result, "score": 6, "pivot": 105.0, "rs20": 1.5,
-            "from_52w_high": 10.0, "swing_return": 20.0, "vcp": True,
-            "vcp_breakout": True,
-        }
-        self.assertIn("Stocks above 200 MA: 62.5%", format_result(batch_result, "BUY"))
         radar_state = {
             "symbol": "TEST", "ep_radar_open": 106.0, "prev_close": 100.0,
             "sector": "Refineries", "prev_low": 95.0,

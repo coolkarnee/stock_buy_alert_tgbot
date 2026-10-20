@@ -20,7 +20,7 @@ from scanner.signal_history import SignalHistory, SIGNAL_HISTORY_FILE
 ARTIFACT_DIR = Path("artifacts")
 OUTPUT_FILE = ARTIFACT_DIR / "swing_performance.csv"
 EXCEL_FILE = ARTIFACT_DIR / "swing_performance.xlsx"
-ALERT_FILE = Path("live_alerts.csv")
+ALERT_FILE = Path("artifacts/live_alerts.csv")
 IST = ZoneInfo("Asia/Kolkata")
 
 OUTPUT_COLUMNS = [

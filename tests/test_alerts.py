@@ -3,10 +3,10 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
 
-import performance
+from jobs import performance
 from config import settings
 from scanner import alerts
-from test_rate_limits import Clock
+from tests.test_rate_limits import Clock
 
 
 def utf16_length(text):

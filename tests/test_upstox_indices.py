@@ -1,7 +1,7 @@
 """Diagnostic check for Upstox NSE index symbols and EMA history.
 
 Run with:
-    UPSTOX_ACCESS_TOKEN=... python test_upstox_indices.py
+    UPSTOX_ACCESS_TOKEN=... python -m tests.test_upstox_indices
 
 Add --all-indexes to fetch EMA values for every NSE_INDEX instrument in the
 Upstox instrument master. The default checks the six indexes used by the live

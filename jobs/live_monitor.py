@@ -158,7 +158,7 @@ def market_summary(phase, index_states, index_quotes, previous_conclusion=None, 
     return "\n".join(lines)
 
 
-def prior_performance_conclusion(path=Path("performance_summary.txt")):
+def prior_performance_conclusion(path=Path("artifacts/performance_summary.txt")):
     try:
         text = path.read_text(encoding="utf-8").strip()
     except (FileNotFoundError, OSError):
@@ -288,7 +288,7 @@ def fmt_ep_orb_alert(state, window, breakout):
 
 def run():
     signal_history = SignalHistory(SIGNAL_HISTORY_FILE)
-    alert_log = Path("live_alerts.csv")
+    alert_log = Path("artifacts/live_alerts.csv")
     with alert_log.open("w", newline="", encoding="utf-8") as f:
         csv.writer(f).writerow([
             "alert_date", "alert_time_ist", "alert_type", "symbol",

@@ -111,18 +111,6 @@ def load_nse_equities():
     ]
     return pd.DataFrame(rows).drop_duplicates('instrument_key').reset_index(drop=True)
 
-def find_nifty500_key():
-    data=load_instruments()
-    candidates=[x for x in data if x.get('segment')=='NSE_INDEX'
-                and x.get('instrument_type') == 'INDEX'
-                and str(x.get('trading_symbol','')).upper() == 'NIFTY 500']
-    if len(candidates) != 1:
-        raise RuntimeError(
-            'Expected exactly one Upstox NSE_INDEX NIFTY 500; '
-            f'found {len(candidates)}.'
-        )
-    return candidates[0]['instrument_key']
-
 def historical_daily(key,years=2):
     end=date.today()
     start=end-timedelta(days=365*years)

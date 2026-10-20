@@ -42,10 +42,11 @@ jobs:
         run: |
           gh run download "${{ github.event.workflow_run.id }}" \
             --name live-alert-performance --dir performance_input
-          find performance_input -name live_alerts.csv -exec cp {} ./live_alerts.csv \;
+          mkdir -p artifacts
+          find performance_input -name live_alerts.csv -exec cp {} artifacts/live_alerts.csv \;
 
       - name: Calculate swing performance
-        run: python -u swing_performance.py
+        run: python -u -m jobs.swing_performance
         env:
           UPSTOX_ACCESS_TOKEN: ${{ secrets.UPSTOX_ACCESS_TOKEN }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}

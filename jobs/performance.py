@@ -13,10 +13,14 @@ from scanner.alert_history import first_daily_alerts
 from scanner.upstox import load_nse_equities, current_day_daily
 
 IST = ZoneInfo("Asia/Kolkata")
+ARTIFACT_DIR = Path("artifacts")
 
 
 def write_summary(text):
-    Path("performance_summary.txt").write_text(text.strip() + "\n", encoding="utf-8")
+    ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+    (ARTIFACT_DIR / "performance_summary.txt").write_text(
+        text.strip() + "\n", encoding="utf-8",
+    )
 
 
 def _move_pct(price, reference):
@@ -48,7 +52,7 @@ def sector_summary(alerts):
 
 
 def run():
-    alert_file = Path("live_alerts.csv")
+    alert_file = ARTIFACT_DIR / "live_alerts.csv"
     if not alert_file.exists():
         report = "📊 LIVE ALERT PERFORMANCE\nNo live BUY alert log was found for today."
         print(report)
@@ -263,7 +267,8 @@ def run():
     send(report)
     write_summary(conclusion)
 
-    with Path("performance.csv").open("w", newline="", encoding="utf-8") as f:
+    ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+    with (ARTIFACT_DIR / "performance.csv").open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(
             [

@@ -8,8 +8,7 @@ from unittest.mock import patch
 import pandas as pd
 from openpyxl import load_workbook
 
-import performance
-import swing_performance
+from jobs import performance, swing_performance
 from scanner import sector
 
 
@@ -155,12 +154,14 @@ class SectorTests(unittest.TestCase):
         today = datetime.now(performance.IST).date().isoformat()
         with TemporaryDirectory() as directory:
             root = Path(directory)
-            alert_file = root / "live_alerts.csv"
+            artifact_dir = root / "artifacts"
+            artifact_dir.mkdir()
+            alert_file = artifact_dir / "live_alerts.csv"
             with alert_file.open("w", newline="", encoding="utf-8") as handle:
                 writer = csv.DictWriter(handle, fieldnames=["alert_date", "symbol", "alert_price"])
                 writer.writeheader()
                 writer.writerow({"alert_date": today, "symbol": "TEST", "alert_price": "100"})
-            with (patch.object(performance, "Path", side_effect=lambda name: root / name),
+            with (patch.object(performance, "ARTIFACT_DIR", artifact_dir),
                   patch.object(performance, "resolve_sector", return_value="Specialty Chemicals"),
                   patch.object(performance, "load_nse_equities",
                                return_value=pd.DataFrame({"trading_symbol": ["TEST"], "instrument_key": ["KEY"]})),
@@ -171,7 +172,7 @@ class SectorTests(unittest.TestCase):
             report = send.call_args.args[0]
             self.assertIn("Sector: Specialty Chemicals", report)
             self.assertIn("Specialty Chemicals: 1 alerts | 1 Momentum BUY | 0 EP", report)
-            with (root / "performance.csv").open(newline="", encoding="utf-8") as handle:
+            with (artifact_dir / "performance.csv").open(newline="", encoding="utf-8") as handle:
                 row = next(csv.DictReader(handle))
             self.assertEqual(row["sector"], "Specialty Chemicals")
             self.assertEqual(row["alert_type"], "BUY")

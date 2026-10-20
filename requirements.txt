@@ -1,8 +1,7 @@
 pandas>=2.2,<3
-numpy>=1.26,<3
 requests>=2.31,<3
 upstox-python-sdk>=2.23.0,<3
-# Imported directly by live_monitor.py when decoding Upstox protobuf messages.
+# Imported directly by jobs/live_monitor.py when decoding Upstox protobuf messages.
 protobuf>=4.25,<7
 openpyxl>=3.1,<4
 matplotlib>=3.8,<4

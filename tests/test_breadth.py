@@ -2,10 +2,19 @@ import unittest
 
 import pandas as pd
 
-from scanner.breadth import BREADTH_TREND_SESSIONS, breadth_trend
+from scanner.breadth import BREADTH_TREND_SESSIONS, breadth_trend, highs_lows_read
 
 
 class BreadthTrendTests(unittest.TestCase):
+    def test_highs_lows_read_uses_longest_period(self):
+        self.assertEqual(
+            highs_lows_read({
+                "1W": {"highs": 1218, "lows": 5049},
+                "1Y": {"highs": 144, "lows": 854},
+            }),
+            "Read (1Y): more new lows than highs",
+        )
+
     def test_trend_waits_for_two_sessions_and_labels_one_session_unavailable(self):
         history = pd.DataFrame({"20-day MA": [36.7]})
         self.assertEqual(BREADTH_TREND_SESSIONS, 7)

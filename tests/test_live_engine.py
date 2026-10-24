@@ -81,7 +81,46 @@ class MomentumTests(unittest.TestCase):
         self.assertIn("NIFTY 500: NA", text)
         self.assertIn("Stocks above 200 MA: 61.2%", text)
 
+    def test_delayed_market_conclusions_are_kept_for_future_alert_context(self):
+        details = live_monitor.append_market_conclusions(
+            "Market Context: NA\nNIFTY 500: NA\nStocks above 200 MA: NA",
+            "bear",
+            "decliners lead",
+            "Read (1Y): more new lows than highs",
+            "200-day MA: broader bear market",
+        )
+        self.assertEqual(
+            details,
+            "Market Context: NA\n"
+            "NIFTY 500: NA\n"
+            "Stocks above 200 MA: NA\n"
+            "Overall market: bear\n"
+            "Read: decliners lead\n"
+            "Read (1Y): more new lows than highs\n"
+            "200-day MA: broader bear market",
+        )
+
     def test_all_conditions_buy_without_dry_up(self):
+        details = live_monitor.append_market_conclusions(
+            "Market Context: Bear Market\n"
+            "NIFTY 500: Downtrending (below EMA10 and EMA20; both falling)\n"
+            "Stocks above 200 MA: 30.4% (Broader Bear; 69.6% below 200 MA) | as of 2026-10-23",
+            "bear",
+            "decliners lead",
+            "Read (1Y): more new lows than highs",
+            "200-day MA: broader bear market",
+        )
+        self.assertEqual(
+            live_monitor.alert_market_context(details),
+            "Market Context: Bear Market\n"
+            "NIFTY 500: Downtrending (below EMA10 and EMA20; both falling)\n"
+            "Stocks above 200 MA: 30.4% (Broader Bear; 69.6% below 200 MA) | as of 2026-10-23\n"
+            "Today decliners lead\n"
+            "Read (1Y): more new lows than highs",
+        )
+        self.assertIn("Overall market: bear", details)
+        self.assertIn("200-day MA: broader bear market", details)
+
         result = live_engine.evaluate(self.state, self.quote)
         self.assertTrue(result["buy"], result["checks"])
         self.assertFalse(result["dry_up"])

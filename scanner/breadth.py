@@ -100,6 +100,29 @@ def parse_advance_decline(page):
     }
 
 
+def advance_decline_read(ad):
+    """Return the short breadth conclusion used by persisted market context."""
+    if not ad or ad.get("ad_ratio") is None:
+        return None
+    ratio = ad["ad_ratio"]
+    return "advancers lead" if ratio > 1 else "decliners lead" if ratio < 1 else "balanced"
+
+
+def highs_lows_read(highs_lows):
+    """Return the new-highs/lows conclusion for the longest available period."""
+    if not highs_lows:
+        return None
+    period = list(highs_lows)[-1]
+    row = highs_lows[period]
+    if row["highs"] > row["lows"]:
+        conclusion = "more new highs than lows"
+    elif row["highs"] < row["lows"]:
+        conclusion = "more new lows than highs"
+    else:
+        conclusion = "balanced"
+    return f"Read ({period}): {conclusion}"
+
+
 def parse_highs_lows(page):
     """Rebuild counts from bar heights; TradingView renders this chart without numeric labels."""
     block = _block(page, "market-breadth-highs-lows", "market-breadth-above-ma")
@@ -253,9 +276,8 @@ def fmt_advance_decline_alert(ad, error=None):
             lines.append(f"A/D ratio: {ad['ad_ratio']:.2f}")
         if ad["up_volume"] is not None and ad["down_volume"] is not None:
             lines.append(f"Up / down volume: {_compact(ad['up_volume'])} / {_compact(ad['down_volume'])}")
-        ratio = ad["ad_ratio"]
-        if ratio is not None:
-            read = "advancers lead" if ratio > 1 else "decliners lead" if ratio < 1 else "balanced"
+        read = advance_decline_read(ad)
+        if read:
             lines.extend(["", f"Read: {read}"])
     if error:
         lines.extend(["", f"TradingView breadth fetch error: {error}"])
@@ -271,11 +293,8 @@ def fmt_highs_lows_alert(highs_lows, error=None):
         for period, row in highs_lows.items():
             net = row["highs"] - row["lows"]
             lines.append(f"{period}: Highs {row['highs']} | Lows {row['lows']} | Net {net:+d}")
-        longest = list(highs_lows)[-1]
-        row = highs_lows[longest]
-        read = ("more new highs than lows" if row["highs"] > row["lows"]
-                else "more new lows than highs" if row["highs"] < row["lows"] else "balanced")
-        lines.extend(["", f"Read ({longest}): {read}"])
+        read = highs_lows_read(highs_lows)
+        lines.extend(["", read])
     if error:
         lines.extend(["", f"TradingView breadth fetch error: {error}"])
     lines.append(f"Source: {TRADINGVIEW_INDIA_URL}")
@@ -486,4 +505,15 @@ def send_breadth_alerts(today):
         _send_with_chart(ma_text, render_moving_averages, values, history, date_text)
     else:
         send(ma_text)
-    return values
+    # Keep the existing MA mapping intact for callers while exposing the
+    # conclusion needed to backfill alerts emitted before the delayed scrape.
+    ma_judgement = next(
+        (line for line in breadth_judgement(values) if line.startswith("200-day MA:")),
+        None,
+    )
+    return {
+        **values,
+        "advance_decline_read": advance_decline_read(data["ad"]),
+        "highs_lows_read": highs_lows_read(data["highs_lows"]),
+        "ma_judgement": ma_judgement,
+    }

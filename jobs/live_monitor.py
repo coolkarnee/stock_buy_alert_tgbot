@@ -43,6 +43,81 @@ MARKET_INDICES = (
 MARKET_CONTEXT_DELAY = timedelta(minutes=20)
 
 
+def overall_market_conclusion(index_states, index_quotes):
+    """Return the persisted overall market conclusion from the index summary."""
+    regimes = []
+    for name, _ in MARKET_INDICES:
+        state = index_states.get(name)
+        quote = index_quotes.get(name)
+        if not state or not quote or quote.get("last_price", 0) <= 0:
+            continue
+        regimes.append(classify_index(state, quote)[0])
+    if not regimes:
+        return None
+    counts = {regime: regimes.count(regime) for regime in ("Bull", "Bear", "Chop")}
+    leading = max(counts, key=counts.get)
+    return (leading if counts[leading] > len(regimes) / 2 else "Chop").lower()
+
+
+def append_market_conclusions(market_details, overall_market=None, breadth_read=None,
+                              highs_lows_read=None, ma_judgement=None):
+    """Add delayed session conclusions to the context stored with an alert."""
+    lines = [line for line in str(market_details or "").splitlines() if line]
+    if overall_market:
+        lines.append(f"Overall market: {overall_market}")
+    if breadth_read:
+        lines.append(f"Read: {breadth_read}")
+    if highs_lows_read:
+        lines.append(highs_lows_read)
+    if ma_judgement:
+        lines.append(ma_judgement)
+    return "\n".join(lines)
+
+
+def alert_market_context(market_details):
+    """Return the concise market context shown in alerts.
+
+    The full set of conclusions remains in the CSV context.
+    """
+    lines = []
+    for line in str(market_details or "").splitlines():
+        if line.startswith("Overall market:") or line.startswith("200-day MA:"):
+            continue
+        if line.startswith("Read: "):
+            line = f"Today {line.split(':', 1)[1].strip()}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def update_alert_log_context(path, alert_date, market_details, overall_market=None,
+                             breadth_read=None, highs_lows_read=None, ma_judgement=None):
+    """Backfill delayed context on alerts already written earlier today."""
+    if not path.exists() or not (overall_market or breadth_read or highs_lows_read or ma_judgement):
+        return
+    try:
+        with path.open(newline="", encoding="utf-8") as handle:
+            rows = list(csv.DictReader(handle))
+        fieldnames = list(rows[0]) if rows else []
+        if "market_context" not in fieldnames:
+            return
+        updated = False
+        for row in rows:
+            if row.get("alert_date") != alert_date.isoformat():
+                continue
+            row["market_context"] = append_market_conclusions(
+                market_details, overall_market, breadth_read,
+                highs_lows_read, ma_judgement,
+            )
+            updated = True
+        if updated:
+            with path.open("w", newline="", encoding="utf-8") as handle:
+                writer = csv.DictWriter(handle, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(rows)
+    except (OSError, csv.Error) as exc:
+        print(f"Alert market context backfill failed: {exc}")
+
+
 def find_market_index_keys(instruments):
     """Return exact normalized Upstox NSE_INDEX matches."""
     def normalize(symbol):
@@ -144,10 +219,8 @@ def market_summary(phase, index_states, index_quotes, previous_conclusion=None, 
         lines.extend(["", f"Index data fetched: {len(regimes)}/{len(MARKET_INDICES)}"])
 
     if regimes:
-        counts = {regime: regimes.count(regime) for regime in ("Bull", "Bear", "Chop")}
-        leading = max(counts, key=counts.get)
-        overall = leading if counts[leading] > len(regimes) / 2 else "Chop"
-        lines.extend(["", f"Overall market: {overall.lower()}"])
+        overall = overall_market_conclusion(index_states, index_quotes)
+        lines.extend(["", f"Overall market: {overall}"])
     else:
         lines.extend(["", "Overall market: unavailable"])
     if previous_conclusion:
@@ -228,6 +301,7 @@ def fmt_alert(kind, r):
         r.get("stocks_above_200ma"),
         r.get("breadth_date"),
     )[1]
+    market_details = alert_market_context(market_details)
     ranges = ", ".join(f"{window}m" for window in r["orb_windows"])
     momentum_tag = "Momentum Stock\n" if r.get("momentum_stock") else ""
     if kind == "EP":
@@ -277,6 +351,13 @@ def fmt_ep_orb_alert(state, window, breakout):
     spot = breakout["orb_mode"] == "spot"
     price_label = "Spot Price" if spot else "Breakout Close"
     time_line = f"Spot quote time: {breakout['quote_time']}\n" if spot else ""
+    market_details = alert_market_context(
+        state.get("market_context") or format_market_context(
+            state.get("nifty_trend", "NA"),
+            state.get("stocks_above_200ma"),
+            state.get("breadth_date"),
+        )[1]
+    )
     return (
         f"EP RADAR ORB BUY - {state['symbol']} | {window}m\n"
         f"Sector: {state.get('sector', UNAVAILABLE_SECTOR)}\n"
@@ -285,7 +366,7 @@ def fmt_ep_orb_alert(state, window, breakout):
         f"ORB confirmation: {breakout['orb_mode']}\n"
         f"{time_line}"
         f"Prev Day Low SL Rs {state['prev_low']:.2f}\n"
-        f"{state.get('market_context') or format_market_context(state.get('nifty_trend', 'NA'), state.get('stocks_above_200ma'), state.get('breadth_date'))[1]}"
+        f"{market_details}"
     )
 
 
@@ -385,6 +466,10 @@ def run():
         "regime": "NA",
         "stocks_above_200ma": None,
         "breadth_date": None,
+        "overall_market": None,
+        "breadth_read": None,
+        "highs_lows_read": None,
+        "ma_judgement": None,
     }
     last_log = 0.0
     open_summary_sent = False
@@ -505,6 +590,14 @@ def run():
                             current_index_quotes[name] = quote_from_snapshot(snapshot)
                 except Exception as exc:
                     print(f"Delayed index quote snapshot failed: {exc}")
+                delayed_nifty = current_index_quotes.get(benchmark_name)
+                if benchmark and delayed_nifty and delayed_nifty.get("last_price", 0) > 0:
+                    market_context["regime"], live_emas = classify_nifty500(
+                        benchmark, delayed_nifty["last_price"],
+                    )
+                    market_context["above_ema"] = (
+                        delayed_nifty["last_price"] > live_emas[1] if live_emas else None
+                    )
                 for name, _ in MARKET_INDICES:
                     quote = current_index_quotes.get(name)
                     if name not in index_states:
@@ -522,12 +615,38 @@ def run():
                 try:
                     breadth = send_breadth_alerts(datetime.now(IST).date()) or {}
                     market_context["stocks_above_200ma"] = breadth.get("200-day MA")
+                    breadth_read = breadth.get("advance_decline_read")
+                    highs_lows_read = breadth.get("highs_lows_read")
+                    ma_judgement = breadth.get("ma_judgement")
                     market_context["breadth_date"] = (
                         datetime.now(IST).date().isoformat()
                         if market_context["stocks_above_200ma"] is not None else None
                     )
                 except Exception as exc:
                     print(f"Market breadth alerts failed: {exc}")
+                    breadth_read = None
+                    highs_lows_read = None
+                    ma_judgement = None
+                delayed_category, delayed_details = format_market_context(
+                    market_context["regime"],
+                    market_context["stocks_above_200ma"],
+                    market_context["breadth_date"],
+                )
+                update_alert_log_context(
+                    alert_log,
+                    datetime.now(IST).date(),
+                    delayed_details,
+                    overall_market_conclusion(index_states, current_index_quotes),
+                    breadth_read,
+                    highs_lows_read,
+                    ma_judgement,
+                )
+                market_context["overall_market"] = overall_market_conclusion(
+                    index_states, current_index_quotes,
+                )
+                market_context["breadth_read"] = breadth_read
+                market_context["highs_lows_read"] = highs_lows_read
+                market_context["ma_judgement"] = ma_judgement
                 open_summary_sent = True
             evaluated = []
             ep_evaluated = []
@@ -555,6 +674,13 @@ def run():
                 state["breadth_date"] = market_context["breadth_date"]
                 state["market_context_category"], state["market_context"] = format_market_context(
                     state["nifty_trend"], state["stocks_above_200ma"], state["breadth_date"],
+                )
+                state["market_context"] = append_market_conclusions(
+                    state["market_context"],
+                    market_context.get("overall_market"),
+                    market_context.get("breadth_read"),
+                    market_context.get("highs_lows_read"),
+                    market_context.get("ma_judgement"),
                 )
                 ep_quote = state["ep_quote"]
                 ep_result = None

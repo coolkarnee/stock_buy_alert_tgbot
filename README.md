@@ -368,19 +368,19 @@ The live scanner thresholds are Python constants in `config/settings.py`, not en
 
 ## Automation
 
-There are five GitHub Actions workflows. The live alert, live performance, and swing performance workflows form the alert-to-report lifecycle; the remaining workflows are manual `workflow_dispatch` jobs:
+There are five GitHub Actions workflows. The live alert, live performance, and swing performance workflows form the alert-to-report lifecycle for both equity and commodity alerts; the remaining workflows are manual `workflow_dispatch` jobs:
 
 | Workflow | Schedule | Action |
 | --- | --- | --- |
-| `.github/workflows/live-alerts.yml` | Manual only | Runs `jobs.live_monitor`. The process waits until 09:00 IST to collect pre-open IEP candidates, confirms alerts from regular quotes after 09:15, and normally monitors until 15:20. The 358-minute deadline starts at dispatch, so dispatch around 08:30 IST allows setup before 09:00 but ends around 14:28 IST. It uploads `artifacts/live_alerts.csv` and commits market breadth and signal history. |
-| `.github/workflows/live-performance.yml` | After successful live alerts and manual | Downloads the exact triggering live-alert artifact, runs `jobs.performance`, and uploads `artifacts/performance.csv`, `artifacts/live_alerts.csv`, and `artifacts/performance_summary.txt` for 30 days. |
+| `.github/workflows/live-alerts.yml` | Manual only | Runs `jobs.live_monitor` and `jobs.commodity_monitor` in parallel. It uploads stock/commodity alert logs and structured CSVs, then commits market breadth and signal history. The job has the GitHub six-hour limit. |
+| `.github/workflows/live-performance.yml` | After successful live alerts and manual | Downloads the exact triggering live-alert artifact, runs equity and commodity performance evaluators, and uploads combined CSV/Excel output plus separate stock and commodity files for 30 days. Commodity SL hits are recorded from later 30-minute candle extremes. |
 | `.github/workflows/swing-performance.yml` | After successful live performance and manual | Downloads the alert input, runs `jobs.swing_performance`, recalculates all persistent swing rows until exit or report date, commits `artifacts/swing_performance.csv`, uploads the formatted Excel workbook for 90 days, and sends it to Telegram. |
 | `.github/workflows/test-ipo-universe.yml` | Manual only | Checks out the selected branch, installs dependencies, and prints IPO symbols with listing dates inside the configured rolling `IPO_LOOKBACK_MONTHS` window. |
 | `.github/workflows/test-telegram.yml` | Manual only | Runs the fixed Telegram connectivity message. |
 
 The live alert workflow produces the log consumed by daily performance; successful daily performance triggers swing performance. Committed swing, signal-history and market-breadth CSVs provide persistence between runs.
 
-GitHub-hosted jobs are hard-killed at 6 hours, and the live monitor runs until 15:20 IST, so a live run started before ~09:20 IST is killed and ends as `cancelled`/`failure`. `live-performance.yml` (and therefore `swing-performance.yml`) then shows "This job was skipped". The `Run live scanner` step has `timeout-minutes: 355`, so it is stopped before the 6h job kill and the `if: always()` steps (breadth commit, `live-alerts` upload) still run. Chosen practice: run `NSE Live Alert Performance` manually after the live run; it uses the latest live run's `live-alerts` artifact, and its success triggers swing performance automatically.
+GitHub-hosted jobs are hard-killed at 6 hours. The live workflow starts both monitors under the same approximately six-hour deadline; dispatching again is required for another session because the workflow remains manual. Run `NSE Live Alert Performance` after the live artifact is available; it uses the latest `live-alerts` artifact and produces both asset classes' performance outputs. Swing performance then follows its successful completion.
 
 ### Main-branch checklist
 
@@ -399,6 +399,8 @@ Before enabling this reference branch in the main branch:
 | --- | --- |
 | `jobs/live_monitor.py` | WebSocket lifecycle, feed parsing, BUY alert dispatch, and market summary |
 | `jobs/performance.py` | Daily alert performance report and next-session conclusion |
+| `jobs/commodity_performance.py` | Commodity 30-minute return and SL-hit evaluation |
+| `jobs/performance_bundle.py` | Combined stock/commodity CSV and Excel artifact builder |
 | `tests/test_live_engine.py` | Offline Momentum, EP, market-context, and live dispatch tests |
 | `scanner/breadth.py` | TradingView breadth scraping, three chart+text alerts, MA history/trend |
 | `scanner/universe.py` | Nifty constituent and NSE IPO universe construction |
@@ -415,6 +417,8 @@ Before enabling this reference branch in the main branch:
 | `docs/telegram-trader-rules.txt` | Copy-paste Telegram rules, signal counts, and report interpretation |
 | `scanner/alerts.py` | Telegram dispatch and shared alert utilities |
 | `config/settings.py` | Credentials and scanner thresholds |
+| `commodity/commodity_settings.py` | Commodity EMA, tolerance, rollover, session and polling settings |
+| `commodity/` | MCX contract selection, data access, signal logic and Telegram alerts |
 | `tests/test_telegram.py` | Manual Telegram connectivity check |
 | `.github/workflows/` | Scheduled/manual GitHub Actions jobs |
 
@@ -426,3 +430,152 @@ Before enabling this reference branch in the main branch:
 - Live monitoring stops its evaluation loop at 15:20 IST. It has WebSocket auto-reconnect enabled, but does not persist alerts or scanner state after process exit.
 
 Use these behaviors as the baseline when changing or replacing a module: live alerting, daily performance, and swing performance are separate workflow stages connected by artifacts and persistent CSV history.
+
+## Commodity futures workflow
+
+Commodity monitoring is implemented separately under [commodity/](commodity/),
+so it does not change the equity scanner rules. The live-alert workflow starts
+both monitors together.
+
+The commodity universe is `GOLDTEN`, `SILVERMIC`, `CRUDEOILM`, and
+`NATGASMINI`. The resolver selects the nearest active MCX futures contract and
+rolls to the next expiry when the front contract has 15 days or fewer left.
+Every alert includes the active contract and expiry.
+
+Commodity rules:
+
+- Daily context uses EMA10 and EMA20 on completed daily candles.
+- A daily crossover alert is sent when EMA10 crosses EMA20 and the daily close
+  is on the matching side of both averages.
+- Intraday entries use completed 30-minute candles and require daily context
+  alignment.
+- Long entries may undercut/touch the EMA zone and close back above it.
+- Short entries are the inverse rejection below the EMA zone.
+- The initial EMA-zone tolerance is 0.25%, configurable in
+  [commodity/commodity_settings.py](commodity/commodity_settings.py).
+- Long alerts use the entry-day low as SL; short alerts use the entry-day high.
+- Alerts show the absolute `SL` price and percentage distance. No automatic
+  order, position sizing, or target is used.
+- The session is 09:00–23:45 IST. Commodity polling is intentionally slower
+  because stock and commodity processes share the same Upstox account quota.
+
+Technical strategy layer:
+
+- Trend continuation uses the existing EMA10/EMA20 pullback setup.
+- Directional breakouts use the prior 20 completed 30-minute candles and an
+  ADX filter. Starting ADX thresholds are GOLDTEN 22, SILVERMIC 25, CRUDEOILM
+  25, and NATGASMINI 28; these are configurable starting values, not a claim
+  that any threshold is universally optimal.
+- Breakouts require volume to be at least 1.20 times the prior 20-candle
+  average. When Upstox supplies usable open interest, rising OI is also
+  required; if OI is unavailable, the breakout is not rejected solely for that
+  missing field.
+- Mean reversion is enabled only when daily context is neutral and ADX is at
+  or below the configured commodity threshold. It requires a 1.5 ATR extension
+  beyond EMA20/Bollinger extremes followed by a reversal candle.
+- There is intentionally no news-event dependency and no time-of-day filter in
+  this version. Strategy names are recorded as `EMA_PULLBACK`,
+  `VOLATILITY_BREAKOUT`, or `MEAN_REVERSION` in the alert CSV and performance
+  output.
+
+The standalone runner is:
+
+```bash
+python -m jobs.commodity_monitor
+```
+
+### Commodity architecture
+
+The commodity implementation is deliberately isolated from the existing stock
+scanner. Its flow is:
+
+```text
+Upstox instrument master
+        ↓
+commodity/contracts.py
+  MCX futures filtering + 15-day rollover selection
+        ↓
+commodity/upstox.py
+  daily candles + 30-minute history/current candles + quotes
+        ↓
+commodity/indicators.py
+  EMA10/EMA20 context, crossover, retest and SL calculations
+        ↓
+commodity/monitor.py
+  session gate, daily refresh, 30-minute polling, deduplication
+        ↓
+commodity/alerts.py
+  Telegram text + MCX TradingView button + commodity_alerts.csv
+```
+
+Responsibilities by module:
+
+- [commodity/commodity_settings.py](commodity/commodity_settings.py): owns
+  commodity symbols, EMA periods, 0.25% retest tolerance, ADX thresholds,
+  breakout/mean-reversion parameters, rollover threshold, 09:00–23:45 IST
+  session, lookback windows, and the conservative four-minute poll interval.
+- [commodity/contracts.py](commodity/contracts.py): filters MCX futures,
+  removes expired contracts, sorts by expiry, and selects the front contract
+  unless it has 15 or fewer days remaining.
+- [commodity/upstox.py](commodity/upstox.py): wraps the Upstox instrument,
+  historical candle, intraday candle, and quote endpoints. Four months of
+  30-minute history is split into sub-quarter requests to respect the V3 API
+  limit. Candle volume and OI are preserved for participation confirmation.
+- [commodity/indicators.py](commodity/indicators.py): contains pure pandas
+  calculations. Daily context requires close/EMA10/EMA20 alignment and detects
+  EMA crossovers. Intraday context evaluates EMA pullback, ADX/volume/OI
+  breakout, and neutral-regime mean reversion. `stop_loss()` uses the entry-day
+  low for long and high for short.
+- [commodity/monitor.py](commodity/monitor.py): refreshes the active contract
+  and completed daily context, checks for rollover, polls current 30-minute
+  candles, and ensures one alert per symbol/candle.
+- [commodity/alerts.py](commodity/alerts.py): formats daily and 30-minute
+  long/short messages, records the structured alert row, and delegates delivery
+  to the existing Telegram transport without changing stock alert behavior.
+
+Job entry points:
+
+- [jobs/commodity_monitor.py](jobs/commodity_monitor.py) initializes the
+  commodity CSV, loads daily context, and runs the monitor loop.
+- [jobs/commodity_performance.py](jobs/commodity_performance.py) reads
+  commodity alert rows, fetches later 30-minute candles, marks `SL HIT` when a
+  later candle reaches the stop, and sends the commodity performance summary.
+- [jobs/performance_bundle.py](jobs/performance_bundle.py) combines the stock
+  performance CSV and commodity performance CSV into one CSV with
+  `asset_class`, and one Excel workbook with separate stock, commodity,
+  raw-alert, and combined sheets.
+
+GitHub Actions starts [jobs/commodity_monitor.py](jobs/commodity_monitor.py)
+beside the equity monitor in [live-alerts.yml](.github/workflows/live-alerts.yml).
+The performance workflow then runs the equity and commodity evaluators before
+building the combined artifact. No commodity module places orders or changes
+the equity scanner's universe, indicators, alerts, or performance rules.
+
+### Commodity Telegram alerts
+
+Daily alerts are labelled `COMMODITY DAILY CONTEXT - LONG` or `SHORT` and show
+the contract, expiry, close, EMA10, EMA20, daily trend, and SL. Intraday alerts
+are labelled `COMMODITY 30M LONG ALERT` or `SHORT` and show entry, EMA values,
+daily context, SL, SL percentage, and candle time. Each message receives an
+MCX TradingView chart button.
+
+### Combined performance artifacts
+
+The live performance workflow evaluates both asset classes. Commodity
+performance checks later 30-minute candle lows/highs against the recorded SL.
+If the level is reached, the result is recorded as `SL HIT`, with hit time,
+SL price, and direction-aware return. Otherwise the row remains `OPEN` and is
+marked to the latest available price.
+
+The uploaded performance artifact contains:
+
+- `performance.xlsx` with `Stock Performance`, `Commodity Performance`,
+  `Commodity Alerts`, and `Combined` sheets.
+- `performance.csv` with an `asset_class` column separating stock and
+  commodity rows.
+- `stock_performance.csv`, `commodity_performance.csv`, and
+  `commodity_alerts.csv` as separate supporting files.
+
+The live alert workflow remains manually dispatched and is limited to roughly
+six hours by GitHub Actions. The performance workflow remains a separate
+manual/connected step after the live artifact is available.

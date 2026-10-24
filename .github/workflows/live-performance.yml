@@ -39,6 +39,7 @@ jobs:
           gh run download "$RUN_ID" --name live-alerts --dir performance_input
           mkdir -p artifacts
           find performance_input -name live_alerts.csv -exec cp {} artifacts/live_alerts.csv \;
+          find performance_input -name commodity_alerts.csv -exec cp {} artifacts/commodity_alerts.csv \;
           if [ ! -f artifacts/live_alerts.csv ]; then
             echo "live_alerts.csv was not found in the live-alerts artifact."
             exit 1
@@ -51,12 +52,22 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
+      - name: Build combined stock and commodity artifact
+        run: |
+          python -u -m jobs.commodity_performance
+          python -u -m jobs.performance_bundle
+
       - name: Upload performance report
         uses: actions/upload-artifact@v4
         with:
           name: live-alert-performance
           path: |
             artifacts/performance.csv
+            artifacts/stock_performance.csv
+            artifacts/commodity_alerts.csv
+            artifacts/commodity_performance.csv
+            artifacts/commodity_performance_summary.txt
+            artifacts/performance.xlsx
             artifacts/live_alerts.csv
             artifacts/performance_summary.txt
           if-no-files-found: warn

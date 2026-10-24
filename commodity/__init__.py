@@ -1,0 +1,2 @@
+"""Commodity futures scanning workflow."""
+

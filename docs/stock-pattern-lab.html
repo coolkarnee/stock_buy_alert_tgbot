@@ -198,6 +198,23 @@ End-of-day stock performance + sector alert counts
 Swing Excel workbook + new partial/full-exit updates</pre>
   <p>The reporting sequence is unchanged. Daily performance normally follows a successful live session, then swing reporting follows successful daily performance. If the long-running live session is stopped or times out, the operator must start daily performance manually using the saved alerts; swing reporting then follows its successful completion.</p>
 
+  <h2>Commodity futures workflow</h2>
+  <p>The live workflow also runs an isolated MCX futures scanner for <strong>GOLDTEN</strong>, <strong>SILVERMIC</strong>, <strong>CRUDEOILM</strong>, and <strong>NATGASMINI</strong>. It chooses the nearest active contract and rolls to the next expiry when the front contract has 15 days or fewer remaining.</p>
+  <p>Commodity daily context uses EMA10 and EMA20. A daily long alert requires the EMA10 crossover above EMA20 with the close above both; a short alert is the inverse. The original <strong>EMA_PULLBACK</strong> setup requires 30-minute alignment with the daily direction: long entries may undercut/touch the EMA zone and close back above it; short entries reject the zone from below. The starting tolerance is 0.25% and is configurable.</p>
+  <p>The technical layer also supports <strong>VOLATILITY_BREAKOUT</strong> and <strong>MEAN_REVERSION</strong>. Directional breakouts use the prior 20 completed 30-minute candles, a commodity-specific ADX threshold, and volume at least 1.20 times the prior 20-candle average. Rising open interest is required when usable Upstox OI is available. Starting ADX values are GOLDTEN 22, SILVERMIC 25, CRUDEOILM 25, and NATGASMINI 28. Mean reversion is allowed only with neutral daily context, ADX below the configured threshold, and a 1.5 ATR extension beyond EMA20/Bollinger extremes followed by a reversal candle. News data and time-of-day filters are not used yet, and the still-forming 30-minute candle is excluded.</p>
+  <p>Every commodity alert explicitly shows <strong>SL</strong>: the entry-day low for long signals and the entry-day high for short signals, including the percentage distance. Alerts remain informational and do not place orders, calculate position size, or set targets.</p>
+  <pre>COMMODITY 30M LONG ALERT
+Instrument: GOLDTEN26FEB
+Expiry: 2026-02-20
+Entry Rs 72820.00 | EMA10 Rs 72740.00 | EMA20 Rs 72690.00
+Daily context: long
+Strategy: EMA_PULLBACK | ADX: 27.40
+Volume ratio: 1.18 | OI change: 240
+SL: Rs 72100.00 (0.989% from entry)
+30M candle: 2026-10-24 14:30:00+05:30</pre>
+  <p>The Telegram message includes an MCX TradingView chart button. Commodity performance evaluates later 30-minute candles: a long SL is hit when a later low reaches the SL, while a short SL is hit when a later high reaches it. The performance report records the strategy, <strong>SL HIT</strong>, hit time, SL price, and direction-aware return.</p>
+  <p>The combined performance artifact contains separate Stock Performance and Commodity Performance sheets in Excel, plus a combined CSV with an <code>asset_class</code> column. Raw commodity alerts, commodity performance, and stock performance remain available as separate supporting CSV files.</p>
+
   <h2>Before acting on a signal</h2>
   <p>Check the chart, company news, sector concentration, available liquidity, your stop, and total portfolio exposure. Multiple alerts from one sector may increase correlated risk. No alert guarantees a profit; this tool does not place orders or manage your positions.</p>
   <footer>Generated from the current Stock Pattern Lab repository behavior. This system is alert-only and does not place orders.</footer>

@@ -35,7 +35,7 @@ jobs:
             gh run download "$RUN_ID" --name live-alert-performance --dir prior_performance || true
             find prior_performance -name performance_summary.txt -exec cp {} artifacts/performance_summary.txt \; || true
           fi
-      - name: Run live scanner
+      - name: Run stock and commodity scanners
         timeout-minutes: 358
         run: |
           REMAINING_SECONDS=$(( SCANNER_STOP_AT - $(date +%s) ))
@@ -43,15 +43,29 @@ jobs:
             echo "Scanner shutdown deadline already reached."
             exit 1
           fi
-          if timeout --signal=INT --kill-after=30s "${REMAINING_SECONDS}s" python -u -m jobs.live_monitor; then
-            exit 0
-          else
-            STATUS=$?
-            if [ "$STATUS" -eq 124 ]; then
-              echo "Scanner session deadline reached; proceeding to save logs."
-            else
-              exit "$STATUS"
-            fi
+          mkdir -p artifacts
+          timeout --signal=INT --kill-after=30s "${REMAINING_SECONDS}s" \
+            python -u -m jobs.live_monitor > artifacts/stock_alerts.log 2>&1 &
+          STOCK_PID=$!
+          timeout --signal=INT --kill-after=30s "${REMAINING_SECONDS}s" \
+            python -u -m jobs.commodity_monitor > artifacts/commodity_alerts.log 2>&1 &
+          COMMODITY_PID=$!
+
+          wait "$STOCK_PID"
+          STOCK_STATUS=$?
+          wait "$COMMODITY_PID"
+          COMMODITY_STATUS=$?
+
+          if [ "$STOCK_STATUS" -eq 124 ] || [ "$COMMODITY_STATUS" -eq 124 ]; then
+            echo "Scanner session deadline reached; proceeding to save logs."
+          fi
+          if [ "$STOCK_STATUS" -ne 0 ] && [ "$STOCK_STATUS" -ne 124 ]; then
+            echo "Stock scanner failed with status $STOCK_STATUS."
+            exit "$STOCK_STATUS"
+          fi
+          if [ "$COMMODITY_STATUS" -ne 0 ] && [ "$COMMODITY_STATUS" -ne 124 ]; then
+            echo "Commodity scanner failed with status $COMMODITY_STATUS."
+            exit "$COMMODITY_STATUS"
           fi
         env:
           UPSTOX_ACCESS_TOKEN: ${{ secrets.UPSTOX_ACCESS_TOKEN }}
@@ -63,7 +77,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: live-alerts
-          path: artifacts/live_alerts.csv
+          path: |
+            artifacts/live_alerts.csv
+            artifacts/stock_alerts.log
+            artifacts/commodity_alerts.log
+            artifacts/commodity_alerts.csv
           if-no-files-found: warn
           retention-days: 7
 

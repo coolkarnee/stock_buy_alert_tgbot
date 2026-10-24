@@ -162,3 +162,83 @@ COMMON NOTES
   prevent it.
 - Restarting the monitor can repeat same-day signals.
 - Alerts do not place orders or guarantee returns.
+
+
+COMMODITY FUTURES WORKFLOW
+
+The live-alert workflow also monitors the following MCX futures families:
+GOLDTEN, SILVERMIC, CRUDEOILM and NATGASMINI.
+
+Contract selection:
+- The nearest active futures contract is selected.
+- If the front contract has 15 days or fewer until expiry, the next expiry is selected.
+- The selected contract and expiry are shown in every commodity message.
+
+Commodity trend and entry rules:
+- Daily context uses completed daily EMA10 and EMA20.
+- A daily long crossover requires EMA10 crossing above EMA20 and the close above both.
+- A daily short crossover requires EMA10 crossing below EMA20 and the close below both.
+- EMA pullback and volatility-breakout entries must agree with the daily direction.
+- Long: the candle can touch or undercut the EMA zone, then must close back above it.
+- Short: the inverse rejection must occur below the EMA zone.
+- EMA-zone tolerance starts at 0.25% and is configurable in commodity/commodity_settings.py.
+- Strategy labels are EMA_PULLBACK, VOLATILITY_BREAKOUT and MEAN_REVERSION.
+- Directional breakouts use the prior 20 completed 30-minute candles, ADX and
+  volume at least 1.20 times the prior 20-candle average. Rising OI is also
+  required when usable Upstox OI is available.
+- Starting ADX thresholds are GOLDTEN 22, SILVERMIC 25, CRUDEOILM 25 and
+  NATGASMINI 28.
+- Mean reversion is only allowed when daily context is neutral, ADX is below
+  the configured threshold, and price has extended at least 1.5 ATR beyond
+  EMA20/Bollinger extremes before reversing.
+- The monitored session is 09:00–23:45 IST.
+- News data and time-of-day filters are not used in this version. The monitor
+  excludes the still-forming 30-minute candle.
+
+Commodity Telegram message examples:
+
+COMMODITY DAILY CONTEXT - LONG
+Instrument: GOLDTEN26FEB
+Expiry: 2026-02-20
+Close Rs 72650.00 | EMA10 Rs 72180.00 | EMA20 Rs 71920.00
+Daily trend: long
+SL: Rs 71800.00 (1.171% from entry)
+This larger timeframe context takes priority over intraday signals.
+
+COMMODITY DAILY CONTEXT - SHORT
+Instrument: CRUDEOILM26FEB
+Expiry: 2026-02-20
+Close Rs 5840.00 | EMA10 Rs 5905.00 | EMA20 Rs 5960.00
+Daily trend: short
+SL: Rs 5980.00 (2.397% from entry)
+This larger timeframe context takes priority over intraday signals.
+
+COMMODITY 30M LONG ALERT
+Instrument: GOLDTEN26FEB
+Expiry: 2026-02-20
+Entry Rs 72820.00 | EMA10 Rs 72740.00 | EMA20 Rs 72690.00
+Daily context: long
+Strategy: EMA_PULLBACK | ADX: 27.40
+Volume ratio: 1.18 | OI change: 240
+SL: Rs 72100.00 (0.989% from entry)
+30M candle: 2026-10-24 14:30:00+05:30
+
+COMMODITY 30M SHORT ALERT
+Instrument: NATGASMINI26FEB
+Expiry: 2026-02-20
+Entry Rs 312.50 | EMA10 Rs 314.10 | EMA20 Rs 315.00
+Daily context: short
+SL: Rs 318.20 (1.824% from entry)
+30M candle: 2026-10-24 18:00:00+05:30
+
+The Telegram message includes an Open TradingView Chart button for the MCX contract.
+
+Commodity performance:
+- Each alert is written to artifacts/commodity_alerts.csv.
+- The performance workflow evaluates later 30-minute candles.
+- Long SL is hit when a later candle low reaches the SL; short SL is hit when a later candle high reaches the SL.
+- Performance reports show SL HIT, hit time, SL price and direction-aware return.
+- Performance rows and Telegram summaries retain the strategy label.
+- The Excel artifact keeps Stock Performance and Commodity Performance on separate sheets.
+- The combined CSV has asset_class=stock or asset_class=commodity.
+- Commodity monitoring is alert-only; no orders, targets or position sizing are applied.

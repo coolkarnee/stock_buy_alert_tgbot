@@ -1,5 +1,44 @@
 STOCK PATTERN LAB - BUY ALERT RULES
 
+QULLAMAGIE STRONG-STOCK UNIVERSE BRIEFING
+
+After the opening market summary and TradingView market-breadth update, the
+live monitor posts a completed-candle watchlist. This briefing is not a BUY
+signal. Stocks are selected from the top 2% by 1M, 3M, or 6M performance and
+must have price > Rs 20, 14-session ADR >3.5%, and average turnover >= Rs 10 Cr.
+
+The briefing labels:
+- HIGH TIGHT FLAG: >=20% 1M or 3M gain, 10-session range <=15%, higher lows,
+  price above rising EMA10 and EMA20.
+- EP WATCH: latest completed session gap >=5% and volume >=2x the prior
+  available 20-session average.
+
+Each listed stock shows 1W, 1M, 3M, 6M, and 12M return; unavailable periods
+show N/A. Turnover averages use up to 50 available traded sessions and show
+the actual session count used. ATR14 is included as a volatility reference and
+ADX14 as a trend-strength reference (ADX does not show direction); neither is
+an extra setup filter.
+
+QULLAMAGIE BUY ALERT
+
+An individual Qullamagie BUY is sent only if the live entry criteria pass:
+- One of the High Tight Flag or EP setups above is present.
+- Price confirms a 3m, 5m, 15m, 30m, or 60m opening-range breakout and is
+  above the previous close.
+- ADR >3.5%, average turnover >= Rs 10 Cr, and entry-day-low stop risk is
+  positive and no wider than one ADR.
+- The High Tight Flag uses higher lows and rising EMA10/EMA20. EP requires
+  opening gap >=5% and volume >=2x the prior 20-session average.
+
+The individual BUY message includes the setup, entry, entry-day low stop,
+stop distance, ADR, ATR14, ADX14, available 1W/1M/3M/6M/12M returns, sector and
+current market context. ATR14 is a volatility reference; ADX14 describes trend
+strength, not direction. Neither is an extra entry filter. Its Telegram
+message includes an Open TradingView Chart button.
+
+The universe briefing is sent after market-breadth messages; it does not
+trigger or replace individual BUY alerts. The live scanner places no orders.
+
 1. MOMENTUM BUY
 
 A broad strength-and-breakout signal. All required checks
@@ -101,6 +140,11 @@ subject to data availability and the other radar conditions.
 COMMON NOTES
 
 - Every BUY alert includes NIFTY 500 trend and stocks-above-200-MA breadth.
+- All stock trade-alert messages (Momentum, EP, EP radar ORB, and Qullamagie)
+  show ADX14; short histories show N/A. ADX indicates trend strength, not
+  direction, and is informational only.
+- Qullamagie universe briefing follows the opening breadth update; individual
+  Qullamagie BUY alerts are separate and wait for live entry confirmation.
 - NIFTY 500 Uptrending: above EMA10 and EMA20, both rising.
 - NIFTY 500 Downtrending: below EMA10 and EMA20, both falling.
 - Otherwise NIFTY 500 is Chopping.

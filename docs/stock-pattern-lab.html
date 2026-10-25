@@ -38,11 +38,12 @@
   <section class="hero">
     <span class="badge">NSE · Upstox · Telegram</span>
     <h1>Stock Pattern Lab</h1>
-    <p class="lead">A transparent alert-only scanner for Momentum BUY and Episodic Pivot BUY signals, with explicit swing-strength and portfolio-risk rules.</p>
+    <p class="lead">A transparent alert-only scanner for Momentum, Episodic Pivot, and Qullamagie-style setups, with market context and explicit risk rules.</p>
   </section>
 
   <div class="grid">
     <section class="card"><h3>Momentum BUY</h3><p>Every live strength, breakout, liquidity, opening-range, swing-period, and SL-risk condition must pass.</p></section>
+    <section class="card"><h3>Qullamagie strong-stock universe</h3><p>After the opening market-breadth briefing, a watchlist shows top-2% 1M/3M/6M leaders that pass ADR, liquidity, and setup filters. It is not itself a BUY signal.</p></section>
     <section class="card"><h3>Episodic Pivot BUY</h3><p>An independent alert for an opening gap above 4.5%, price above developing EMA21 and ₹20, ATR above 3.0% for non-IPOs, and sufficient liquidity. Pre-open IEP nominates candidates; a regular-session quote confirms them after 09:15.</p></section>
     <section class="card"><h3>EP radar opening-range BUY</h3><p>For any stock opening more than 4.5% higher: opening-range confirmation on 3, 5, 15, 30, or 60 minutes using the same close/spot choice as Momentum, while also staying above EMA21, above Rs 20, and above Rs 20 Cr turnover.</p></section>
     <section class="card"><h3>Swing performance</h3><p>Every alert uses the previous trading day's low as the initial SL. A +10% move in non-Bull context or +15% in combined Bull context books part of the position; the remainder trails on daily 10 EMA/breakeven, then 20 EMA. Rows are marked as Trade open, Partial exit, or Full exit through the report date.</p></section>
@@ -57,6 +58,10 @@
   <p>This alert means the stock opened with a sharp positive gap and is continuing to hold above an important trend level. This can indicate new information, a result, an announcement, or a sudden change in investor demand.</p>
   <p>Gap-up stocks can be volatile: they may continue higher, move sideways, or quickly give back the gap. The alert is therefore a prompt for further research and risk planning, not confirmation of a guaranteed return.</p>
   <p class="note">The live monitor connects at 09:00 IST to collect indicative pre-open IEP candidates. IEP is not a traded price; EP BUY is sent only after a fresh regular-session quote confirms the required conditions. At most one Momentum BUY and one Episodic Pivot BUY is sent for the same stock during a run. No automatic order is placed.</p>
+  <h3>Qullamagie Buy Alert</h3>
+  <p>The strong-stock universe briefing is posted after the opening market summary and breadth messages. It ranks leaders in the top 2% by 1M, 3M, or 6M return and lists 1W, 1M, 3M, 6M, and 12M performance. Periods without enough history show N/A. Average turnover uses up to 50 available trading sessions and reports the session count. ATR14 shows volatility; ADX14 shows trend strength but not direction. Both are informational and do not independently trigger an alert.</p>
+  <p>An individual Qullamagie Buy Alert is a separate live entry signal. A High Tight Flag needs a gain of at least 20% over 1M or 3M, a 10-session range no wider than 15%, higher lows, and price above rising EMA10 and EMA20. An EP needs a 5% or greater opening gap and at least 2x the prior 20-session average volume. Both setups require an opening-range breakout, price above the previous close, ADR above 3.5%, average turnover of at least ₹10 crore, and entry-day-low risk no wider than one ADR.</p>
+  <p>The individual BUY message includes the setup, performance, entry-day-low stop, current market context, and an <strong>Open TradingView Chart</strong> button. ATR14 is shown as a volatility reference, while ADX14 gives trend strength but not direction; neither is an additional entry filter. The universe briefing is informational; neither alert places an order or guarantees a return.</p>
   <p>Telegram delivery requires the Telegram settings. Without them, the alert appears in the workflow log.</p>
   <p>Long Telegram messages are split automatically rather than shortened, including the signal-frequency information. Oversized image or workbook captions follow as text. Broker requests are paced within per-process quotas, so large watchlists can delay startup and candle confirmations; avoid running other scanners or reports on the same broker account simultaneously. Network and provider failures can still prevent delivery.</p>
   <p class="note">EP BUY never suppresses Momentum BUY: the same stock can receive both when their own conditions pass. The separate EP radar scan can add one breakout message per range, up to five per stock per session.</p>
@@ -123,22 +128,25 @@ Sector: Refineries
 Breakout Close Rs 110.00 | Opening Gap +4.60%
 Opening 3m High Rs 105.00
 ORB confirmation: close
+ADX14 28.4
 Prev Day Low SL Rs 102.00</pre>
   <p>The alert identifies the confirmation mode: close messages show the confirming candle's close; spot messages show the live spot price and quote time. Delayed data can produce later delivery; a displayed earlier price does not guarantee that entry was available when you received the message.</p>
 
-  <h2>Sector context with every stock alert</h2>
-  <p>Momentum BUY and Episodic Pivot BUY messages include the company's <strong>sector</strong> as classified by Upstox, for example Refineries.</p>
+  <h2>Sector and ADX context with every stock alert</h2>
+  <p>Momentum BUY, Episodic Pivot BUY, and EP radar ORB messages include the company's <strong>sector</strong> as classified by Upstox, for example Refineries. All stock trade alerts also show <strong>ADX14</strong> as informational trend-strength context. ADX does not show direction, is not a buy filter, and may be N/A when history is too short.</p>
   <p>Sector labels come from Upstox's company profiles, matched using each stock's ISIN. When no usable sector is available, the alert shows <strong>Sector: NA</strong> and the stock is not rejected. Fetching a profile can add delivery time. Sector is context for traders, not another buy condition.</p>
   <pre>EPISODIC PIVOT BUY - EXAMPLE
 Sector: Specialty Chemicals
 Price Rs 106.00 | Gap +4.60%
 Prev Day Low SL Rs 100.00
+ATR 14d 5.42% | ADX14 28.4 | Turnover 50d avg Rs 23.5 Cr
 ...
 
 MOMENTUM BUY - EXAMPLE
 Sector: Specialty Chemicals
 Price Rs 110.00 | Prev Day Low SL Rs 104.50
 Max Position 20.00%
+ATR 14d 5.42% | ADX14 28.4 | Turnover 50d avg Rs 23.5 Cr
 ...</pre>
   <p>These examples illustrate the layout only. They are not actual stock signals. Both alert types include a button to open the stock's TradingView chart.</p>
 

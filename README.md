@@ -1,4 +1,4 @@
-The Telegram message can arrive only during the live market-monitoring session after the live workflow has been started and after the market has opened. A stock must meet the complete set of requirements for its alert category at the same time. If the stock loses the required strength before that happens, the message will not be sent.
+The live scanner's entry alerts arrive only after the market opens. When the live workflow is manually started around 09:00 IST, it sends the Qullamagie strong-stock universe briefing immediately after the opening market summary and breadth update (normally after the 09:35 IST context check). Individual Qullamagie BUY alerts are sent only when their live entry criteria pass. If Telegram credentials are absent, messages are printed to the workflow log.
 
 At most one Momentum BUY and one Episodic Pivot BUY message is sent for the same stock during one monitoring run. No order is placed automatically. Telegram delivery requires the configured Telegram credentials; otherwise the message is available in the workflow log.
 
@@ -73,6 +73,47 @@ This is a **per-process** REST budget, not an account-wide quota coordinator. Do
 
 Budget compliance trades throughput for safety: 900 one-request-per-stock history loads take about 13.8 minutes at minimum, before other calls/network delays. Full-universe startup can therefore delay opening alerts; start sufficiently early or arrange preloading before the session. Roughly 65 REST calls/minute sustained are available across candle refreshes, profiles and other requests. A large EP radar cannot refresh every candidate each minute simultaneously: candle requests queue and close confirmations can be reconstructed later, while spot alerts use the live price available when evaluated. Rate limiting does not guarantee timely provider data or Telegram delivery.
 
+## Qullamagie Post-Breadth Briefing and Buy Alerts
+
+When the live-monitor workflow is manually started around 09:00 IST, it sends
+this report after the opening market summary and breadth alerts, normally after
+the 09:35 IST context check. It reuses the live monitor's two-year daily
+candle download across the existing NSE universe and selects stocks in the top
+2% for at least one of the 1-month, 3-month, or 6-month return rankings. The
+report only includes those leaders when they also pass the following India-
+focused filters:
+
+- Price above ₹20, average turnover of at least ₹10 crore, and
+  14-session ADR above 3.5%.
+- **High Tight Flag:** at least a 20% gain over 1 or 3 months, a 10-session
+  range no wider than 15%, rising lows, price above EMA10 and EMA20, and both
+  averages rising.
+- **Episodic Pivot:** the latest completed session opened at least 5% above the
+  prior close and traded at least 2x its prior 20-session average volume.
+
+The post-breadth report is a watchlist based on completed candles; it is not an
+entry signal. An individual **Qullamagie Buy Alert** is sent only after its
+live setup and entry criteria pass: a High Tight Flag needs the 20%+ 1M/3M
+impulse, tight range, higher lows, rising EMA10/EMA20 and price above both; an
+EP needs a 5%+ opening gap and at least 2x volume. Both require a confirmed
+opening-range breakout, price above the prior close, ADR above 3.5%, average
+turnover of at least ₹10 crore, and entry-day-low risk no wider than one ADR.
+The buy message includes the available market context and a TradingView chart
+button. It also shows ATR14 as a volatility reference and ADX14 as a
+trend-strength reference (ADX does not show direction); neither is an
+additional buy filter.
+The entry-day low is printed as the initial SL price. The scanner does not
+place orders or automate scale-outs/trailing exits.
+Each stock includes 1W, 1M, 3M, 6M, and 12M performance; periods without enough
+history display `N/A`. Turnover uses up to 50 available trading sessions, so
+newer or intermittently traded stocks use the sessions they actually have. The
+report includes the number of sessions used, ATR14 for volatility, and ADX14
+for trend strength (ADX does not show direction). These values are
+informational. Telegram text is split by the
+shared transport to stay below Telegram's message length limit. The
+`QULLAMAGGIE_MIN_TURNOVER_CR` setting controls the default ₹10 crore liquidity
+floor.
+
 ## Live Momentum BUY Rules
 
 Every mandatory live Momentum BUY condition below must align:
@@ -126,7 +167,7 @@ Momentum Stock
 Price Rs 110.00 | Prev Day Low SL Rs 104.50
 Max Position 20.00%
 Gap +0.00% | Move +10.00% from open | +10.00% from low
-ATR 14d 29.35% | Turnover 50d avg Rs 25.4 Cr
+ATR 14d 29.35% | ADX14 31.7 | Turnover 50d avg Rs 25.4 Cr
 52W HI -0.00% | 52W LO +57.14%
 Strength: 1W +22.2% (>10%), 1M +25.0% (>19%), 3M +37.5% (>29%)
 ORB close: 3m, 5m | RVOL 1.55x | Pocket Pivot
@@ -140,7 +181,7 @@ EPISODIC PIVOT BUY - ELECON
 Sector: Specialty Industrial Machinery
 Price Rs 110.00 | Gap +6.00%
 Prev Day Low SL Rs 104.50
-ATR 14d 29.35% | Turnover 50d avg Rs 25.4 Cr
+ATR 14d 29.35% | ADX14 31.7 | Turnover 50d avg Rs 25.4 Cr
 Perf: 1W +22.2% ✓ | 1M +5.8% | 3M -8.3% | 6M +15.8% | 1Y +120.0% ✓ | 18M +83.3%
 Market Context: Bear Market
 NIFTY 500: Downtrending (below EMA10 and EMA20; both falling)
@@ -152,7 +193,7 @@ EPISODIC PIVOT BUY - KANOHAR
 Sector: NA
 Price Rs 110.00 | Gap +6.00%
 Prev Day Low SL Rs 104.50
-ATR 4d 7.27% | Turnover 4d avg Rs 29.5 Cr
+ATR 4d 7.27% | ADX14 N/A | Turnover 4d avg Rs 29.5 Cr
 Perf: NA (3 sessions)
 Market Context: NA
 NIFTY 500: NA
@@ -210,6 +251,7 @@ Sector: Refineries
 Breakout Close Rs 110.00 | Opening Gap +4.60%
 Opening 3m High Rs 105.00
 ORB confirmation: close
+ADX14 28.4
 Prev Day Low SL Rs 102.00
 ```
 
@@ -241,7 +283,7 @@ The live monitor sends Momentum BUY and Episodic Pivot BUY messages at most once
 
 Telegram delivery uses the Telegram Bot API `sendMessage` endpoint. A non-success response or request exception is printed and processing continues. Missing Telegram credentials cause the message to be printed locally.
 
-Stock Telegram alerts include an `Open TradingView Chart` inline button. The button uses the cross-platform HTTPS URL `https://www.tradingview.com/chart/?symbol=NSE%3ASYMBOL`, which opens the chart in the TradingView app when the device handles the link there, or in the browser otherwise. The exchange-qualified symbol avoids ambiguity for NSE stocks. The same link is used by live Momentum, EP, and EP-radar alerts. Stock alerts are text-only by design (no rendered chart image) to keep the live monitor lightweight; the button gives one-click access to the full chart. Chart images are rendered only for the market breadth alerts.
+Every stock trade alert, including Momentum BUY, EP BUY, EP radar ORB, and Qullamagie BUY, prints ADX14 as informational trend-strength context. Short histories display `N/A`. ADX does not indicate trend direction and is not an extra entry filter. Stock Telegram trade alerts include an `Open TradingView Chart` inline button. The button uses the cross-platform HTTPS URL `https://www.tradingview.com/chart/?symbol=NSE%3ASYMBOL`, which opens the chart in the TradingView app when the device handles the link there, or in the browser otherwise. The exchange-qualified symbol avoids ambiguity for NSE stocks. Stock alerts are text-only by design (no rendered chart image) to keep the live monitor lightweight; the button gives one-click access to the full chart. Chart images are rendered only for the market breadth alerts.
 
 ### Sector tags and daily sector counts
 

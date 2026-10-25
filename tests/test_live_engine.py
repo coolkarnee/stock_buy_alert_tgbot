@@ -240,6 +240,7 @@ class MomentumTests(unittest.TestCase):
         self.assertIn("Perf: 1W +10.0%", live_monitor.fmt_alert("EP", result))
         short = live_engine.evaluate(live_engine.build_state("NEW", self.history.iloc[:3], None), self.quote)
         self.assertIn("Perf: NA (3 sessions)", live_monitor.fmt_alert("EP", short))
+        self.assertIn("ADX14 N/A", live_monitor.fmt_alert("EP", short))
         self.state["year_high"] = 130
         self.assertFalse(live_engine.evaluate(self.state, self.quote)["checks"]["near_high"])
 
@@ -452,6 +453,9 @@ class MomentumTests(unittest.TestCase):
         self.assertIn("ORB close: 3m", message)
         self.assertIn("52W HI -", message)
         self.assertIn("ATR 14d ", message)
+        expected_adx = self.state["adx14"]
+        self.assertIn(f"ADX14 {expected_adx:.1f}", message)
+        self.assertIn(f"ADX14 {expected_adx:.1f}", live_monitor.fmt_alert("EP", result))
         self.assertIn("Turnover 50d avg Rs ", message)
         # 1W reference 90 -> +22.2% passes the >10% 1W rule; 100-based references fail 1M+.
         self.assertIn("Strength: 1W +22.2% (>10%)", message)
@@ -469,12 +473,14 @@ class MomentumTests(unittest.TestCase):
         radar_state = {
             "symbol": "TEST", "ep_radar_open": 106.0, "prev_close": 100.0,
             "sector": "Refineries", "prev_low": 95.0,
+            "adx14": expected_adx,
             "market_context": result["market_context"],
         }
         radar_message = live_monitor.fmt_ep_orb_alert(radar_state, 3, {
             "price": 111.0, "range_high": 110.0, "orb_mode": "close",
         })
         self.assertIn("Stocks above 200 MA: 62.5%", radar_message)
+        self.assertIn(f"ADX14 {expected_adx:.1f}", radar_message)
         result["sector"] = "Specialty Chemicals"
         for kind in ("BUY", "EP"):
             self.assertIn("Sector: Specialty Chemicals", live_monitor.fmt_alert(kind, result))

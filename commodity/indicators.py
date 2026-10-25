@@ -34,8 +34,12 @@ def add_volatility_and_trend(candles):
     smoothed_range = true_ranges.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
     plus_di = 100 * plus_dm.ewm(alpha=1 / period, adjust=False, min_periods=period).mean() / smoothed_range
     minus_di = 100 * minus_dm.ewm(alpha=1 / period, adjust=False, min_periods=period).mean() / smoothed_range
-    directional_sum = (plus_di + minus_di).replace(0, float("nan"))
-    frame["adx"] = (100 * (plus_di - minus_di).abs() / directional_sum).ewm(
+    directional_sum = plus_di + minus_di
+    dx = 100 * (plus_di - minus_di).abs() / directional_sum
+    # A valid candle with no directional movement has DX=0. Keep warm-up
+    # NaNs intact, but don't let a flat market make the entire ADX series NaN.
+    dx = dx.mask(directional_sum.eq(0), 0.0)
+    frame["adx"] = dx.ewm(
         alpha=1 / period, adjust=False, min_periods=period
     ).mean()
 
@@ -127,10 +131,10 @@ def intraday_signal(candles, daily_direction, commodity=None, tolerance_pct=None
     frame = add_volatility_and_trend(
         candles.dropna(subset=["open", "high", "low", "close"]).copy()
     )
-    frame = add_emas(frame).dropna(subset=["atr", "adx"])
-    if len(frame) < settings.BREAKOUT_LOOKBACK + 1:
-        return None
+    frame = add_emas(frame)
     current = frame.iloc[-1]
+    if pd.isna(current["atr"]) or pd.isna(current["adx"]):
+        return None
     previous = frame.iloc[-2]
     threshold = settings.ADX_THRESHOLDS.get(commodity, settings.ADX_DEFAULT_THRESHOLD)
     tolerance = (settings.EMA_TOUCH_TOLERANCE_PCT if tolerance_pct is None else tolerance_pct) / 100

@@ -1,0 +1,7 @@
+alert_date,alert_time_ist,alert_type,symbol,alert_price,sl_price,market_context,sector
+2026-10-02,2026-10-02T12:15:00+05:30,BUY,TEST,110.00,102.00,"Market Context: NA
+NIFTY 500: NA
+Stocks above 200 MA: 1.0% (Broader Bear; 99.0% below 200 MA) | as of 2026-10-02 | Oversold
+Read: <MagicMock name='send_breadth_alerts().get()' id='4650653008'>
+<MagicMock name='send_breadth_alerts().get()' id='4650653008'>
+<MagicMock name='send_breadth_alerts().get()' id='4650653008'>",Specialty Chemicals

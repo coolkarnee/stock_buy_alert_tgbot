@@ -21,6 +21,7 @@ from scanner.indicators import ema
 from scanner.market_context import classify_nifty500, market_context as format_market_context
 from scanner.sector import get_sector, UNAVAILABLE_SECTOR
 from scanner.signal_history import SignalHistory, SIGNAL_HISTORY_FILE
+from scanner.qullamagie_daily import build_report as build_qullamagie_report
 from scanner.upstox import (
     load_instruments,
     load_nse_equities,
@@ -68,9 +69,9 @@ def append_market_conclusions(market_details, overall_market=None, breadth_read=
     if breadth_read:
         lines.append(f"Read: {breadth_read}")
     if highs_lows_read:
-        lines.append(highs_lows_read)
+        lines.append(str(highs_lows_read))
     if ma_judgement:
-        lines.append(ma_judgement)
+        lines.append(str(ma_judgement))
     return "\n".join(lines)
 
 
@@ -270,7 +271,10 @@ def extract_quote(feed):
     }
 
 def _atr_turnover_line(r):
+    adx_value = r.get("adx14")
+    adx_text = f"{adx_value:.1f}" if adx_value is not None else "N/A"
     return (f"ATR {r['atr_days']}d {r['atr_pct']:.2f}% | "
+            f"ADX14 {adx_text} | "
             f"Turnover {r['turnover_period_days']}d avg Rs {r['turnover_cr']:.1f} Cr")
 
 
@@ -339,6 +343,35 @@ def fmt_alert(kind, r):
         f"{market_details}"
     )
 
+
+def fmt_qullamagie_alert(r):
+    """Format a criteria-qualified Qullamagie entry with context and chart."""
+    market_details = r.get("market_context") or format_market_context(
+        r.get("nifty_trend", "NA"),
+        r.get("stocks_above_200ma"),
+        r.get("breadth_date"),
+    )[1]
+    market_details = alert_market_context(market_details)
+    performance = []
+    for label in ("1W", "1M", "3M", "6M", "1Y"):
+        move = r.get("swing_moves", {}).get(label)
+        performance.append(f"{ '12M' if label == '1Y' else label} {move:+.1f}%" if move is not None
+                           else f"{ '12M' if label == '1Y' else label} N/A")
+    adx_value = r.get("adx14")
+    adx_text = f"{adx_value:.1f}" if adx_value is not None else "N/A"
+    return (
+        f"Qullamagie Buy Alert - {r['symbol']}\n"
+        f"Setup: {r['qullamagie_setup']} | ORB: {', '.join(str(x) + 'm' for x in r['orb_windows'])}\n"
+        f"Entry Rs {r['price']:.2f} | Entry-day low SL Rs {r['day_low']:.2f}\n"
+        f"SL risk {r['qullamagie_sl_pct']:.2f}% | ADR cap {r['adr_pct']:.2f}% | "
+        f"Turnover Rs {r['turnover_cr']:.1f} Cr avg\n"
+        f"ATR14 {r['atr_pct']:.2f}% | ADX14 {adx_text}\n"
+        f"Performance: {' | '.join(performance)}\n"
+        f"Sector: {r.get('sector', UNAVAILABLE_SECTOR)}\n"
+        f"{market_details}"
+    )
+
+
 def market_open_close():
     now = datetime.now(IST)
     start = datetime.combine(now.date(), dtime(9, 15), tzinfo=IST)
@@ -351,6 +384,8 @@ def fmt_ep_orb_alert(state, window, breakout):
     spot = breakout["orb_mode"] == "spot"
     price_label = "Spot Price" if spot else "Breakout Close"
     time_line = f"Spot quote time: {breakout['quote_time']}\n" if spot else ""
+    adx_value = state.get("adx14")
+    adx_text = f"{adx_value:.1f}" if adx_value is not None else "N/A"
     market_details = alert_market_context(
         state.get("market_context") or format_market_context(
             state.get("nifty_trend", "NA"),
@@ -364,6 +399,7 @@ def fmt_ep_orb_alert(state, window, breakout):
         f"{price_label} Rs {breakout['price']:.2f} | Opening Gap {gap:+.2f}%\n"
         f"Opening {window}m High Rs {breakout['range_high']:.2f}\n"
         f"ORB confirmation: {breakout['orb_mode']}\n"
+        f"ADX14 {adx_text}\n"
         f"{time_line}"
         f"Prev Day Low SL Rs {state['prev_low']:.2f}\n"
         f"{market_details}"
@@ -422,11 +458,13 @@ def run():
     data = historical_many(universe, years=2, max_workers=settings.UPSTOX_MAX_WORKERS)
 
     states = {}
+    qullamagie_histories = {}
     for _, row in universe.iterrows():
         symbol = row.trading_symbol
         _, df, error = data.get(row.instrument_key, (symbol, pd.DataFrame(), "missing"))
         if error or df.empty:
             continue
+        qullamagie_histories[symbol] = df
         try:
             state = build_state(symbol, df, nifty_df)
             if state:
@@ -449,6 +487,7 @@ def run():
     streamer.auto_reconnect(True, 10, 20)
 
     sent_buy = set()
+    sent_qullamagie = set()
     sent_ep = set()
     sent_ep_orb = set()
     latest_quotes = {}
@@ -627,6 +666,7 @@ def run():
                     breadth_read = None
                     highs_lows_read = None
                     ma_judgement = None
+                send(build_qullamagie_report(qullamagie_histories))
                 delayed_category, delayed_details = format_market_context(
                     market_context["regime"],
                     market_context["stocks_above_200ma"],
@@ -745,6 +785,11 @@ def run():
                     send(fmt_alert("EP", result) + frequency, chart_symbol=result["symbol"])
 
             for instrument_key, alert_key, result in evaluated:
+                if result.get("qullamagie_buy") and alert_key not in sent_qullamagie:
+                    result["sector"] = get_sector(result["symbol"])
+                    alert_time = datetime.now(IST)
+                    send(fmt_qullamagie_alert(result), chart_symbol=result["symbol"])
+                    sent_qullamagie.add(alert_key)
                 if result["buy"] and alert_key not in sent_buy:
                     result["sector"] = get_sector(result["symbol"])
                     sent_buy.add(alert_key)

@@ -4,7 +4,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 
 from config import settings
-from scanner.indicators import ema
+from scanner.indicators import adx, ema
 
 IST = ZoneInfo("Asia/Kolkata")
 ORB_WINDOWS = (3, 5, 15, 30, 60)
@@ -60,6 +60,13 @@ def build_state(symbol, df, nifty_df):
         if len(history) >= period else None
         for label, period, _ in SWING_MOVE_RULES
     }
+    impulse_1m = float(history.close.iloc[-21]) if len(history) >= 21 else None
+    impulse_3m = float(history.close.iloc[-63]) if len(history) >= 63 else None
+    flag_rows = history.iloc[-10:]
+    flag_range_pct = ((float(flag_rows.high.max()) - float(flag_rows.low.min())) /
+                      float(flag_rows.low.min()) * 100) if len(flag_rows) == 10 else None
+    flag_higher_lows = bool((history.low.iloc[-5:].diff().dropna() >= 0).sum() >= 3)
+    adx_values = adx(history.high, history.low, history.close, 14)
     return {
         "symbol": symbol,
         "history_days": len(history),
@@ -86,6 +93,14 @@ def build_state(symbol, df, nifty_df):
         ),
         "market_above_ema": market_above_ema,
         "swing_move_references": swing_move_references,
+        "impulse_1m": impulse_1m,
+        "impulse_3m": impulse_3m,
+        "flag_range_pct": flag_range_pct,
+        "flag_higher_lows": flag_higher_lows,
+        "adr_pct": float((history.high - history.low).iloc[-14:].mean() /
+                          history.close.iloc[-1] * 100) if len(history) >= 14 else None,
+        "adx14": (float(adx_values.iloc[-1])
+                  if len(history) >= 28 and pd.notna(adx_values.iloc[-1]) else None),
         "orb_highs": {},
         "orb_close_breaks": {},
         "first30_volume": None,
@@ -410,6 +425,18 @@ def evaluate(state, quote):
         (not atr_ready or atr_pct > settings.EP_MIN_ATR_PCT) and
         liquidity_condition
     )
+    adr_pct = state.get("adr_pct", state["prior_tr13"] / 13 / state["prev_close"] * 100)
+    q_flag = (
+        ((state.get("impulse_1m") is not None and price / state["impulse_1m"] >= 1.20)
+         or (state.get("impulse_3m") is not None and price / state["impulse_3m"] >= 1.20))
+        and state.get("flag_range_pct") is not None and state["flag_range_pct"] <= 15
+        and state.get("flag_higher_lows", False)
+        and state.get("ema10_prev") is not None and state["ema10"] > state["ema10_prev"]
+        and state.get("ema21_prev") is not None and state["ema21"] > state["ema21_prev"]
+        and state["ema10"] > state["ema21"] and price > state["ema10"] and price > state["ema21"]
+    )
+    q_ep = day_open > state["prev_close"] * 1.05 and volume >= state["avg_volume"] * 2
+    q_sl_pct = (price - day_low) / price * 100
     return {
         **state,
         "price": price,
@@ -447,6 +474,13 @@ def evaluate(state, quote):
         "atr_ready": atr_ready,
         "strength_ready": strength_ready,
         "episodic_pivot": episodic_pivot,
+        "qullamagie_buy": bool((q_flag or q_ep) and adr_pct is not None and adr_pct > 3.5
+                                and turnover_cr >= getattr(settings, "QULLAMAGGIE_MIN_TURNOVER_CR", 10.0)
+                                and orb_windows and 0 < q_sl_pct <= adr_pct
+                                and price > state["prev_close"]),
+        "qullamagie_setup": "EP" if q_ep else "HIGH TIGHT FLAG" if q_flag else "",
+        "qullamagie_sl_pct": q_sl_pct,
+        "adr_pct": adr_pct,
         # Informational only: price above live EMA10/EMA21 and both EMAs rising on completed bars.
         "momentum_stock": bool(
             price > current_ema10 and price > current_ema21 and

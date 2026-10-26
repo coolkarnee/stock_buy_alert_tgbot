@@ -15,8 +15,8 @@ EMA21_REQUIRED_SESSIONS=21
 MOMENTUM_STRENGTH_START_SESSIONS=63
 MIN_RVOL=1.30
 BREAKOUT_BUFFER_PCT=0.50
-# EP opening gap must be strictly greater than this percentage.
-EP_MIN_GAP_PCT=4.5
+# EP opening gap must meet or exceed this percentage.
+EP_MIN_GAP_PCT=4.0
 # EP alerts require ATR strictly above this percentage after ATR warm-up.
 EP_MIN_ATR_PCT=3.0
 # Adds IPOs with actual listing dates inside this rolling window to the universe.

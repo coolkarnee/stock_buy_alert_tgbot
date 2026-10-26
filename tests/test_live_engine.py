@@ -355,9 +355,9 @@ class MomentumTests(unittest.TestCase):
         live_engine.update_intraday(self.state, self.ep_candles, self.ep_start + timedelta(minutes=1))
         self.assertTrue(live_engine.evaluate(self.state, self.state["ep_quote"])["episodic_pivot"])
 
-    def test_ep_gap_threshold_is_configurable_and_strict(self):
+    def test_ep_gap_threshold_is_configurable_and_inclusive(self):
         for threshold, opening, expected in (
-            (4.5, 104.49, False), (4.5, 104.50, False), (4.5, 104.51, True),
+            (4.5, 104.49, False), (4.5, 104.50, True), (4.5, 104.51, True),
             (6.0, 104.60, False), (6.0, 106.10, True),
         ):
             with self.subTest(threshold=threshold, opening=opening):
@@ -366,6 +366,19 @@ class MomentumTests(unittest.TestCase):
                 with patch.object(settings, "EP_MIN_GAP_PCT", threshold):
                     result = live_engine.evaluate(self.state, self.state["ep_quote"])
                 self.assertEqual(result["episodic_pivot"], expected)
+
+    def test_qullamagie_ep_uses_the_same_configured_gap_threshold(self):
+        quote = {
+            **self.quote,
+            "ohlc": {"open": 104.0, "high": 110.0, "low": 104.0},
+        }
+        with patch.object(settings, "EP_MIN_GAP_PCT", 4.0):
+            result = live_engine.evaluate(self.state, quote)
+        self.assertEqual(result["qullamagie_setup"], "EP")
+
+        with patch.object(settings, "EP_MIN_GAP_PCT", 4.01):
+            result = live_engine.evaluate(self.state, quote)
+        self.assertNotEqual(result["qullamagie_setup"], "EP")
 
     def test_ep_rejects_previous_day_missing_or_invalid_opening_candle(self):
         for candles in (

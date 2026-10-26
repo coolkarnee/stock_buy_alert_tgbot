@@ -238,7 +238,7 @@ def update_ep_radar(state, bars, start):
     if bars.empty or bars.timestamp.iloc[0] != start:
         return
     opening_price = float(bars.open.iloc[0])
-    if opening_price <= state["prev_close"] * (1 + settings.EP_MIN_GAP_PCT / 100):
+    if opening_price < state["prev_close"] * (1 + settings.EP_MIN_GAP_PCT / 100):
         return
     state["ep_radar_open"] = opening_price
     bars = bars.copy()
@@ -419,12 +419,21 @@ def evaluate(state, quote):
     episodic_pivot = (
         state.get("ep_quote") is not None and
         pd.Timestamp(state["ep_quote"]["timestamp"]).date() == datetime.now(IST).date() and
-        day_open > state["prev_close"] * (1 + settings.EP_MIN_GAP_PCT / 100) and
+        day_open >= state["prev_close"] * (1 + settings.EP_MIN_GAP_PCT / 100) and
         (not ema21_ready or price > current_ema21) and
         price > settings.MIN_PRICE and
         (not atr_ready or atr_pct > settings.EP_MIN_ATR_PCT) and
         liquidity_condition
     )
+    ep_checks = {
+        "opening_data": state.get("ep_quote") is not None,
+        "opening_gap": day_open >= state["prev_close"] * (1 + settings.EP_MIN_GAP_PCT / 100),
+        "ema21": not ema21_ready or price > current_ema21,
+        "price_floor": price > settings.MIN_PRICE,
+        "atr": not atr_ready or atr_pct > settings.EP_MIN_ATR_PCT,
+        "liquidity": liquidity_condition,
+    }
+    ep_rejection_reasons = [name for name, passed in ep_checks.items() if not passed]
     adr_pct = state.get("adr_pct", state["prior_tr13"] / 13 / state["prev_close"] * 100)
     q_flag = (
         ((state.get("impulse_1m") is not None and price / state["impulse_1m"] >= 1.20)
@@ -435,7 +444,10 @@ def evaluate(state, quote):
         and state.get("ema21_prev") is not None and state["ema21"] > state["ema21_prev"]
         and state["ema10"] > state["ema21"] and price > state["ema10"] and price > state["ema21"]
     )
-    q_ep = day_open > state["prev_close"] * 1.05 and volume >= state["avg_volume"] * 2
+    q_ep = (
+        day_open >= state["prev_close"] * (1 + settings.EP_MIN_GAP_PCT / 100)
+        and volume >= state["avg_volume"] * 2
+    )
     q_sl_pct = (price - day_low) / price * 100
     return {
         **state,
@@ -474,6 +486,8 @@ def evaluate(state, quote):
         "atr_ready": atr_ready,
         "strength_ready": strength_ready,
         "episodic_pivot": episodic_pivot,
+        "ep_checks": ep_checks,
+        "ep_rejection_reasons": ep_rejection_reasons,
         "qullamagie_buy": bool((q_flag or q_ep) and adr_pct is not None and adr_pct > 3.5
                                 and turnover_cr >= getattr(settings, "QULLAMAGGIE_MIN_TURNOVER_CR", 10.0)
                                 and orb_windows and 0 < q_sl_pct <= adr_pct

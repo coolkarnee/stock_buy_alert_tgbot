@@ -80,22 +80,36 @@ this report after the opening market summary and breadth alerts, normally after
 the 09:35 IST context check. It reuses the live monitor's two-year daily
 candle download across the existing NSE universe and selects stocks in the top
 2% for at least one of the 1-month, 3-month, or 6-month return rankings. The
-report only includes those leaders when they also pass the following India-
-focused filters:
+report lists those leaders when they pass the following India-focused
+price, liquidity, and volatility filters:
 
 - Price above ₹20, average turnover of at least ₹10 crore, and
   14-session ADR above 3.5%.
+- For fewer than 10 completed sessions, the EMA trend filter is warm-up and
+  passes. From 10 through 20 sessions, price must be above EMA10. From 21
+  sessions onward, price must be above EMA21 and EMA10 must be above EMA21.
+  The stock must also be no more than 20% below the highest high in the latest
+  252 completed sessions. For newly listed stocks, the highest high and
+  drawdown are calculated from all available completed sessions.
+- Each ranking period contributes at most 20 names. Since the 1M, 3M, and 6M
+  lists can overlap, the combined report can contain up to 60 stocks.
 - **High Tight Flag:** at least a 20% gain over 1 or 3 months, a 10-session
-  range no wider than 15%, rising lows, price above EMA10 and EMA20, and both
+  range no wider than 15%, rising lows, price above EMA10 and EMA21, and both
   averages rising.
-- **Episodic Pivot:** the latest completed session opened at least 5% above the
+- **Episodic Pivot:** the latest completed session opened at least 4% above the
   prior close and traded at least 2x its prior 20-session average volume.
 
-The post-breadth report is a watchlist based on completed candles; it is not an
-entry signal. An individual **Qullamagie Buy Alert** is sent only after its
+The post-breadth report is a watchlist based on completed candles; it is sent
+once after the opening summary and breadth update, normally around 09:35 IST.
+It lists each top-2% leader separately for 1M, 3M, and 6M (including which
+period made it a leader), along with its performance and sector. A top-2%
+leader is listed even when it has not completed either the High Tight Flag or
+Episodic Pivot setup; it is labeled `LEADER` in that case. An individual
+**Qullamagie Buy Alert** is sent only after its
 live setup and entry criteria pass: a High Tight Flag needs the 20%+ 1M/3M
-impulse, tight range, higher lows, rising EMA10/EMA20 and price above both; an
-EP needs a 5%+ opening gap and at least 2x volume. Both require a confirmed
+impulse, tight range, higher lows, rising EMA10/EMA21 and price above both; an
+EP needs an opening gap of at least the configured 4% threshold and at least
+2x volume. Both require a confirmed
 opening-range breakout, price above the prior close, ADR above 3.5%, average
 turnover of at least ₹10 crore, and entry-day-low risk no wider than one ADR.
 The buy message includes the available market context and a TradingView chart
@@ -217,7 +231,7 @@ The breakout reference is the lower of yesterday's high and close, with the 0.50
 
 An independent EP alert requires all five conditions below:
 
-- The day's actual open is strictly more than `EP_MIN_GAP_PCT` above yesterday's close (default **4.5%**, configured in `config/settings.py`).
+- The day's actual open must be at least `EP_MIN_GAP_PCT` above yesterday's close (default **4.0%**, configured in `config/settings.py`).
 - After 21 completed sessions, current price must be above developing EMA21; earlier sessions are EMA warm-up.
 - Price is strictly above ₹20.
 - ATR is strictly above `EP_MIN_ATR_PCT` (default **3.0%**) after 14 ATR inputs are available; before then ATR is warm-up.
@@ -227,7 +241,7 @@ EP alerts do not require Momentum BUY volume confirmation, momentum, breakout, r
 
 EP BUY and Momentum BUY remain independent: an EP alert never suppresses a qualifying Momentum alert, and Momentum does not require an earlier EP alert. Each is sent at most once per symbol per day within the process.
 
-The monitor connects at 09:00 IST and records Upstox's pre-open indicative equilibrium price (IEP). An IEP more than `EP_MIN_GAP_PCT` above the previous close nominates a candidate; it is indicative, not a traded price or an alert. After 09:15, a fresh regular-session quote must confirm the actual opening gap, developing EMA21, price floor, EP ATR threshold, and turnover before EP BUY is sent. Stocks without a usable pre-open IEP can still be found by the completed one-minute candle refresh after the open. Provider, REST queue, or Telegram delays can postpone delivery.
+The monitor connects at 09:00 IST and records Upstox's pre-open indicative equilibrium price (IEP). An IEP at least `EP_MIN_GAP_PCT` above the previous close nominates a candidate; it is indicative, not a traded price or an alert. After 09:15, a fresh regular-session quote must confirm the actual opening gap, developing EMA21, price floor, EP ATR threshold, and turnover before EP BUY is sent. Stocks without a usable pre-open IEP can still be found by the completed one-minute candle refresh after the open. Provider, REST queue, or Telegram delays can postpone delivery.
 
 The EP ATR threshold is separate from Momentum BUY's `MIN_ATR_PCT`: `EP_MIN_ATR_PCT=3.0`. EP enforces developing EMA21 after 21 completed sessions; before that it is warm-up. Price >₹20 and available-history turnover >₹20 Cr apply from day one. EP does not require Momentum volume confirmation, swing strength, near-high, ORB, or stop-distance conditions.
 
@@ -237,7 +251,7 @@ Yesterday's close and indicator baselines still exclude today's unfinished daily
 
 This is a separate, lighter scan, not a replacement for EP BUY or Momentum BUY:
 
-- **Radar membership:** the actual opening minute's open is strictly more than `EP_MIN_GAP_PCT` (default 4.5%) above the previous completed session's close. A full EP BUY is **not** required. The opening gap defines membership even if the stock fails EMA, ATR, liquidity, price-floor, or Momentum checks.
+- **Radar membership:** the actual opening minute's open must be at least `EP_MIN_GAP_PCT` (default 4.0%) above the previous completed session's close. A full EP BUY is **not** required. The opening gap defines membership even if the stock fails EMA, ATR, liquidity, price-floor, or Momentum checks.
 - **Ranges:** first **3, 5, 15, 30, and 60 minutes** from market open. All one-minute price candles within a range must be available and valid before its high is trusted.
 - **ORB confirmation:** uses the same `OPENING_RANGE_BREAKOUT_MODE` in `config/settings.py` as Momentum. `"close"` (default) requires a completed candle close strictly above the opening-range high; `"spot"` requires the current live price strictly above that high once the range has formed. This is the existing close/spot choice, not a new yes/no setting. Touching or equalling the high does not qualify.
 - **Minimal quality filters:** after 21 completed sessions, qualifying price must be above developing EMA21; earlier sessions are EMA warm-up. Price must always be strictly above ₹20 and pass the same turnover/liquidity threshold (>₹20 Cr), calculated over available history up to 50 sessions. Close mode uses the confirming candle's close and cumulative volume through that candle; spot mode uses live price and cumulative volume (completed-candle volume is the baseline if the tick omits it). It still does not require Momentum volume surge, breakout-reference, near-high, swing strength, ATR, or SL-distance checks.
@@ -406,7 +420,7 @@ Environment variables read in `config/settings.py`:
 
 `UPSTOX_MAX_WORKERS` is a Python constant used by live historical-data preparation (default eight), not an environment variable.
 
-The live scanner thresholds are Python constants in `config/settings.py`, not environment variables. They include `MIN_PRICE=20`, `MIN_TURNOVER_CR=20`, `MAX_FROM_52W_HIGH=20`, `EARLY_HISTORY_MAX_FROM_52W_HIGH=15`, `MIN_ATR_PCT=3.49`, `EP_MIN_ATR_PCT=3.0`, `ATR_REQUIRED_SESSIONS=14`, `EMA21_REQUIRED_SESSIONS=21`, `MOMENTUM_STRENGTH_START_SESSIONS=63`, `IPO_LOOKBACK_MONTHS=12` for universe membership only, `MIN_RVOL=1.30`, `BREAKOUT_BUFFER_PCT=0.50`, `EP_MIN_GAP_PCT=4.5`, and `DARK_RED_CANDLE_DROP_PCT=4.0`.
+The live scanner thresholds are Python constants in `config/settings.py`, not environment variables. They include `MIN_PRICE=20`, `MIN_TURNOVER_CR=20`, `MAX_FROM_52W_HIGH=20`, `EARLY_HISTORY_MAX_FROM_52W_HIGH=15`, `MIN_ATR_PCT=3.49`, `EP_MIN_ATR_PCT=3.0`, `ATR_REQUIRED_SESSIONS=14`, `EMA21_REQUIRED_SESSIONS=21`, `MOMENTUM_STRENGTH_START_SESSIONS=63`, `IPO_LOOKBACK_MONTHS=12` for universe membership only, `MIN_RVOL=1.30`, `BREAKOUT_BUFFER_PCT=0.50`, `EP_MIN_GAP_PCT=4.0`, and `DARK_RED_CANDLE_DROP_PCT=4.0`.
 
 ## Automation
 

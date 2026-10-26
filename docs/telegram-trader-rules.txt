@@ -10,7 +10,7 @@ must have price > Rs 20, 14-session ADR >3.5%, and average turnover >= Rs 10 Cr.
 The briefing labels:
 - HIGH TIGHT FLAG: >=20% 1M or 3M gain, 10-session range <=15%, higher lows,
   price above rising EMA10 and EMA20.
-- EP WATCH: latest completed session gap >=5% and volume >=2x the prior
+- EP WATCH: latest completed session gap >=4% and volume >=2x the prior
   available 20-session average.
 
 Each listed stock shows 1W, 1M, 3M, 6M, and 12M return; unavailable periods
@@ -28,7 +28,7 @@ An individual Qullamagie BUY is sent only if the live entry criteria pass:
 - ADR >3.5%, average turnover >= Rs 10 Cr, and entry-day-low stop risk is
   positive and no wider than one ADR.
 - The High Tight Flag uses higher lows and rising EMA10/EMA20. EP requires
-  opening gap >=5% and volume >=2x the prior 20-session average.
+  opening gap >=4% and volume >=2x the prior 20-session average.
 
 The individual BUY message includes the setup, entry, entry-day low stop,
 stop distance, ADR, ATR14, ADX14, available 1W/1M/3M/6M/12M returns, sector and
@@ -81,7 +81,7 @@ change alert exemptions; live warm-ups use completed session age.
 
 An independent opening-gap signal:
 
-- Today's opening gap strictly above 4.5% versus the
+- Today's opening gap at least 4.0% versus the
   previous trading day's close.
 - Pre-open IEP above the gap threshold nominates a
   candidate; IEP is indicative, not a traded price.
@@ -104,7 +104,7 @@ detected by the regular post-open completed-candle scan.
 3. EP RADAR OPENING-RANGE BUY
 
 A separate scan for stocks whose verified opening gap
-is strictly above 4.5%. A normal EP BUY is not required.
+is at least 4.0%. A normal EP BUY is not required.
 
 Five opening ranges are tracked independently:
 3 minutes, 5 minutes, 15 minutes, 30 minutes and 1 hour.

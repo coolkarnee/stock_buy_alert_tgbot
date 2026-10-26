@@ -578,7 +578,7 @@ def run():
                 preopen_ep_candidates = {
                     instrument_key
                     for instrument_key, iep in opening_indications.items()
-                    if iep > states[instrument_key]["prev_close"] * (
+                    if iep >= states[instrument_key]["prev_close"] * (
                         1 + settings.EP_MIN_GAP_PCT / 100
                     )
                 }
@@ -666,7 +666,10 @@ def run():
                     breadth_read = None
                     highs_lows_read = None
                     ma_judgement = None
-                send(build_qullamagie_report(qullamagie_histories))
+                send(build_qullamagie_report(
+                    qullamagie_histories,
+                    sector_lookup=get_sector,
+                ))
                 delayed_category, delayed_details = format_market_context(
                     market_context["regime"],
                     market_context["stocks_above_200ma"],
@@ -728,6 +731,11 @@ def run():
                     ep_result = evaluate(state, ep_quote)
                     if ep_result:
                         ep_evaluated.append((instrument_key, alert_key, ep_result))
+                        if (not ep_result["episodic_pivot"]
+                                and not state.get("ep_rejection_logged")):
+                            reasons = ", ".join(ep_result["ep_rejection_reasons"]) or "unknown"
+                            print(f"[{state['symbol']}] EP rejected: {reasons}")
+                            state["ep_rejection_logged"] = True
                 result = evaluate(state, quote)
                 if result:
                     evaluated.append((instrument_key, alert_key, result))
@@ -735,9 +743,9 @@ def run():
                 gap_reference = state["prev_close"] * (1 + settings.EP_MIN_GAP_PCT / 100)
                 day_open = float((quote.get("ohlc") or {}).get("open") or 0)
                 ep_gap_candidate = (
-                    ep_quote["ohlc"]["open"] > gap_reference
+                    ep_quote["ohlc"]["open"] >= gap_reference
                     if ep_quote is not None else
-                    day_open <= 0 or max(day_open, quote.get("last_price") or 0) > gap_reference
+                    day_open <= 0 or max(day_open, quote.get("last_price") or 0) >= gap_reference
                 )
                 needs_ep_data = (
                     alert_key not in sent_ep and ep_gap_candidate

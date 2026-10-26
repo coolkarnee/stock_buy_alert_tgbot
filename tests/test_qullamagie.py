@@ -40,9 +40,27 @@ class QullamagieAlertTests(unittest.TestCase):
     def test_universe_report_shows_periods_atr_adx_and_actual_turnover_sessions(self):
         report = build_report({"TEST": self.frame}, top_fraction=1.0)
         self.assertIn("TEST · EP", report)
-        for label in ("1W", "1M", "3M", "6M", "12M", "ATR14", "ADX14"):
+        for label in ("Sector: NA", "Top-2% in: 1M, 3M, 6M", "1W", "1M", "3M", "6M", "12M", "ATR14", "ADX14"):
             self.assertIn(label, report)
         self.assertIn("50 sessions", report)
+
+    def test_top_momentum_leader_is_shown_without_completed_setup(self):
+        frame = self.frame.copy()
+        frame["open"] = frame["close"]
+        frame["high"] = frame["close"] * 1.08
+        frame["low"] = frame["close"] * 0.92
+        frame["volume"] = 2_000_000.0
+        report = build_report({"TEST": frame}, top_fraction=1.0)
+        self.assertIn("TEST · LEADER", report)
+        self.assertIn("Top-2% in: 1M, 3M, 6M", report)
+        self.assertIn("No High Tight Flag or EP setup yet", report)
+
+    def test_watchlist_includes_sector_from_lookup(self):
+        report = build_report(
+            {"TEST": self.frame}, top_fraction=1.0,
+            sector_lookup=lambda symbol: "Specialty Chemicals",
+        )
+        self.assertIn("Sector: Specialty Chemicals", report)
 
     def test_buy_alert_includes_stop_atr_adx_market_context_and_performance(self):
         result = {

@@ -18,8 +18,14 @@ def _read(path, asset_class, record_type):
     if not path.exists():
         return pd.DataFrame({"asset_class": [asset_class], "record_type": [record_type], "status": ["NO DATA"]})
     frame = pd.read_csv(path)
-    frame.insert(0, "asset_class", asset_class)
-    frame.insert(1, "record_type", record_type)
+    if "asset_class" in frame.columns:
+        frame["asset_class"] = asset_class
+    else:
+        frame.insert(0, "asset_class", asset_class)
+    if "record_type" in frame.columns:
+        frame["record_type"] = record_type
+    else:
+        frame.insert(1, "record_type", record_type)
     return frame
 
 

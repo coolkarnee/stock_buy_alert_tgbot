@@ -21,15 +21,36 @@ def _headers():
 
 
 def _get_json(url, params=None):
-    response = requests.get(url, headers=_headers(), params=params, timeout=15)
-    response.raise_for_status()
+    try:
+        response = requests.get(url, headers=_headers(), params=params, timeout=15)
+        response.raise_for_status()
+    except requests.HTTPError as exc:
+        failed_response = exc.response
+        request = failed_response.request if failed_response is not None else None
+        print(
+            f"[MCX][UPSTOX][HTTP] {request.method if request else 'GET'} "
+            f"{failed_response.url if failed_response is not None else url} failed: HTTP "
+            f"{failed_response.status_code if failed_response is not None else 'unknown'} | "
+            f"{failed_response.text[:1000] if failed_response is not None else str(exc)}"
+        )
+        raise
+    except requests.RequestException as exc:
+        print(f"[MCX][UPSTOX][REQUEST] {url} failed: {type(exc).__name__}: {exc}")
+        raise
     return response.json()
 
 
 def load_instruments():
-    response = requests.get(INSTRUMENTS_URL, timeout=60)
-    response.raise_for_status()
-    return json.loads(gzip.decompress(response.content))
+    try:
+        response = requests.get(INSTRUMENTS_URL, timeout=60)
+        response.raise_for_status()
+        instruments = json.loads(gzip.decompress(response.content))
+        if not isinstance(instruments, list):
+            raise ValueError("Upstox complete instrument file did not contain a JSON list.")
+        return instruments
+    except Exception as exc:
+        print(f"[MCX][UPSTOX][INSTRUMENTS][ERROR] {type(exc).__name__}: {exc}")
+        raise
 
 
 def _frame(payload):

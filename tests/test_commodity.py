@@ -23,6 +23,16 @@ def candles(closes, lows=None, highs=None, opens=None, start="2026-01-01"):
 
 
 class ContractTests(unittest.TestCase):
+    def test_parses_upstox_expiry_epoch_milliseconds_and_fut_type(self):
+        instruments = [{
+            "segment": "MCX_FO", "instrument_type": "FUT",
+            "trading_symbol": "GOLDTEN FUT 25 JAN 24",
+            "underlying_symbol": "GOLDTEN", "instrument_key": "MCX_FO|123",
+            "expiry": 1706207399000,
+        }]
+        selected = contracts.select_contract(instruments, "GOLDTEN", date(2024, 1, 5))
+        self.assertEqual(selected["expiry"], "2024-01-25")
+
     def test_rolls_to_next_contract_when_front_has_fifteen_days_or_less(self):
         instruments = [
             {"segment": "MCX_FO", "instrument_type": "FUTCOM", "trading_symbol": "GOLDTEN26JAN", "instrument_key": "front", "expiry": "2026-01-20"},

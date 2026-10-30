@@ -51,10 +51,18 @@ jobs:
             python -u -m jobs.commodity_monitor > artifacts/commodity_alerts.log 2>&1 &
           COMMODITY_PID=$!
 
-          wait "$STOCK_PID"
-          STOCK_STATUS=$?
-          wait "$COMMODITY_PID"
-          COMMODITY_STATUS=$?
+          STOCK_STATUS=0
+          if wait "$STOCK_PID"; then
+            STOCK_STATUS=0
+          else
+            STOCK_STATUS=$?
+          fi
+          COMMODITY_STATUS=0
+          if wait "$COMMODITY_PID"; then
+            COMMODITY_STATUS=0
+          else
+            COMMODITY_STATUS=$?
+          fi
 
           if [ "$STOCK_STATUS" -eq 124 ] || [ "$COMMODITY_STATUS" -eq 124 ]; then
             echo "Scanner session deadline reached; proceeding to save logs."
@@ -99,6 +107,9 @@ jobs:
             echo "No market breadth or signal history changes to commit."
           else
             git commit -m "Update market breadth and signal history"
+            # Other scanner outputs have already been uploaded as artifacts.
+            # Stash them so the rebase has a clean worktree.
+            git stash push --include-untracked -m "temporary scanner outputs"
             git pull --rebase origin "${GITHUB_REF_NAME}"
             git push origin "HEAD:${GITHUB_REF_NAME}"
           fi

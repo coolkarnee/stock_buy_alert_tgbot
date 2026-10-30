@@ -1,8 +1,11 @@
 """Active MCX futures discovery and rollover selection."""
 
-from datetime import date
+from datetime import date, datetime, timezone
+from zoneinfo import ZoneInfo
 
 from commodity import commodity_settings as settings
+
+IST = ZoneInfo("Asia/Kolkata")
 
 
 def _text(value):
@@ -13,7 +16,21 @@ def _expiry(instrument):
     value = instrument.get("expiry")
     if not value:
         return None
-    return date.fromisoformat(str(value)[:10])
+    if isinstance(value, datetime):
+        return value.astimezone(IST).date() if value.tzinfo else value.date()
+    if isinstance(value, date):
+        return value
+    text = str(value).strip()
+    try:
+        timestamp_value = float(text)
+    except ValueError:
+        timestamp_value = None
+    if timestamp_value is not None:
+        timestamp = int(timestamp_value)
+        # Upstox BOD instrument files represent futures expiry as epoch milliseconds.
+        seconds = timestamp / 1000 if timestamp >= 100_000_000_000 else timestamp
+        return datetime.fromtimestamp(seconds, tz=timezone.utc).astimezone(IST).date()
+    return date.fromisoformat(text[:10])
 
 
 def commodity_candidates(instruments, symbol, as_of=None):
@@ -28,7 +45,9 @@ def commodity_candidates(instruments, symbol, as_of=None):
             continue
         if not instrument_type.startswith("FUT"):
             continue
-        if wanted not in _text(trading_symbol) and wanted not in _text(instrument.get("name")):
+        if all(wanted not in _text(value) for value in (
+            trading_symbol, instrument.get("name"), instrument.get("underlying_symbol")
+        )):
             continue
         expiry = _expiry(instrument)
         if expiry and expiry >= as_of:
@@ -55,5 +74,24 @@ def select_contract(instruments, symbol, as_of=None, minimum_days=None):
 
 
 def select_all(instruments, as_of=None):
-    return {symbol: select_contract(instruments, symbol, as_of) for symbol in settings.COMMODITIES}
+    selected = {}
+    for symbol in settings.COMMODITIES:
+        try:
+            candidates = commodity_candidates(instruments, symbol, as_of)
+            if not candidates:
+                print(f"[MCX][CONTRACT] {symbol}: no active futures matched the instrument master.")
+                continue
+            contract = select_contract(instruments, symbol, as_of)
+            selected[symbol] = contract
+            print(
+                f"[MCX][CONTRACT] {symbol}: selected "
+                f"{contract.get('trading_symbol') or contract.get('tradingsymbol')} "
+                f"expiry={contract['expiry']} key={contract['instrument_key']} "
+                f"({len(candidates)} active candidates)."
+            )
+        except Exception as exc:
+            print(f"[MCX][CONTRACT] {symbol}: selection failed: {type(exc).__name__}: {exc}")
+    if not selected:
+        raise LookupError("No supported MCX commodity futures contracts could be selected.")
+    return selected
 

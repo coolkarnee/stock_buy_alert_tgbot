@@ -42,6 +42,7 @@ MARKET_INDICES = (
 )
 
 MARKET_CONTEXT_DELAY = timedelta(minutes=20)
+CLOSING_INDEX_REFRESH_BEFORE = timedelta(minutes=10)
 
 
 def overall_market_conclusion(index_states, index_quotes):
@@ -61,7 +62,8 @@ def overall_market_conclusion(index_states, index_quotes):
 
 
 def append_market_conclusions(market_details, overall_market=None, breadth_read=None,
-                              highs_lows_read=None, ma_judgement=None):
+                              highs_lows_read=None, ma_judgement=None,
+                              nifty_summary_trend=None):
     """Add delayed session conclusions to the context stored with an alert."""
     lines = [line for line in str(market_details or "").splitlines() if line]
     if overall_market:
@@ -72,6 +74,8 @@ def append_market_conclusions(market_details, overall_market=None, breadth_read=
         lines.append(str(highs_lows_read))
     if ma_judgement:
         lines.append(str(ma_judgement))
+    if nifty_summary_trend:
+        lines.append(f"NIFTY 500 summary trend: {nifty_summary_trend}")
     return "\n".join(lines)
 
 
@@ -81,19 +85,41 @@ def alert_market_context(market_details):
     The full set of conclusions remains in the CSV context.
     """
     lines = []
+    overall_market = None
+    nifty_summary_trend = None
     for line in str(market_details or "").splitlines():
+        if line.startswith("Overall market:"):
+            overall_market = line.split(":", 1)[1].strip()
+            continue
+        if line.startswith("NIFTY 500 summary trend:"):
+            nifty_summary_trend = line.split(":", 1)[1].strip()
+            continue
         if line.startswith("Overall market:") or line.startswith("200-day MA:"):
             continue
         if line.startswith("Read: "):
             line = f"Today {line.split(':', 1)[1].strip()}"
         lines.append(line)
+    if overall_market and overall_market.lower() != "unavailable":
+        normalized = overall_market.strip().title()
+        lines = [
+            f"Market Context: {normalized}" if line.startswith("Market Context:") else line
+            for line in lines
+        ]
+    if nifty_summary_trend:
+        lines = [
+            f"NIFTY 500: {nifty_summary_trend}" if line.startswith("NIFTY 500:") else line
+            for line in lines
+        ]
     return "\n".join(lines)
 
 
 def update_alert_log_context(path, alert_date, market_details, overall_market=None,
-                             breadth_read=None, highs_lows_read=None, ma_judgement=None):
+                             breadth_read=None, highs_lows_read=None, ma_judgement=None,
+                             nifty_summary_trend=None):
     """Backfill delayed context on alerts already written earlier today."""
-    if not path.exists() or not (overall_market or breadth_read or highs_lows_read or ma_judgement):
+    if not path.exists() or not (
+        overall_market or breadth_read or highs_lows_read or ma_judgement or nifty_summary_trend
+    ):
         return
     try:
         with path.open(newline="", encoding="utf-8") as handle:
@@ -107,7 +133,7 @@ def update_alert_log_context(path, alert_date, market_details, overall_market=No
                 continue
             row["market_context"] = append_market_conclusions(
                 market_details, overall_market, breadth_read,
-                highs_lows_read, ma_judgement,
+                highs_lows_read, ma_judgement, nifty_summary_trend,
             )
             updated = True
         if updated:
@@ -200,6 +226,21 @@ def quote_from_snapshot(snapshot):
         },
         "timestamp": str(snapshot.get("timestamp", "")),
     }
+
+
+def refresh_index_quotes(index_keys, index_name_by_key, target_quotes):
+    """Refresh available index quotes from REST and update the supplied mapping."""
+    keys = list(dict.fromkeys(index_keys.values()))
+    if not keys:
+        return 0
+    snapshots = full_market_quotes(keys)
+    refreshed = 0
+    for key, snapshot in snapshots.items():
+        name = index_name_by_key.get(key)
+        if name and snapshot.get("last_price") is not None:
+            target_quotes[name] = quote_from_snapshot(snapshot)
+            refreshed += 1
+    return refreshed
 
 
 def market_summary(phase, index_states, index_quotes, previous_conclusion=None, alert_counts=None):
@@ -506,6 +547,7 @@ def run():
         "stocks_above_200ma": None,
         "breadth_date": None,
         "overall_market": None,
+        "nifty_summary_trend": None,
         "breadth_read": None,
         "highs_lows_read": None,
         "ma_judgement": None,
@@ -513,6 +555,7 @@ def run():
     last_log = 0.0
     open_summary_sent = False
     start_notification_sent = False
+    closing_index_refresh_done = False
     start, end = market_open_close()
     preopen_start = start.replace(hour=9, minute=0)
 
@@ -572,6 +615,22 @@ def run():
         streamer.connect()
         preopen_scan_done = False
         while datetime.now(IST) < end:
+            if (not closing_index_refresh_done
+                    and datetime.now(IST) >= end - CLOSING_INDEX_REFRESH_BEFORE):
+                closing_index_refresh_done = True
+                try:
+                    refreshed_index_quotes = {}
+                    refreshed_count = refresh_index_quotes(
+                        index_keys, index_name_by_key, refreshed_index_quotes,
+                    )
+                    with quote_lock:
+                        index_quotes.update(refreshed_index_quotes)
+                    print(
+                        f"Pre-close REST index quote refresh: "
+                        f"{refreshed_count}/{len(index_keys)} indexes returned quotes."
+                    )
+                except Exception as exc:
+                    print(f"Pre-close index quote refresh failed: {exc}")
             if not preopen_scan_done and datetime.now(IST) >= start:
                 with quote_lock:
                     opening_indications = dict(preopen_iep)
@@ -637,6 +696,16 @@ def run():
                     market_context["above_ema"] = (
                         delayed_nifty["last_price"] > live_emas[1] if live_emas else None
                     )
+                market_context["overall_market"] = overall_market_conclusion(
+                    index_states, current_index_quotes,
+                )
+                nifty_state = index_states.get(benchmark_name)
+                nifty_quote = current_index_quotes.get(benchmark_name)
+                market_context["nifty_summary_trend"] = (
+                    classify_index(nifty_state, nifty_quote)[0]
+                    if nifty_state and nifty_quote and nifty_quote.get("last_price", 0) > 0
+                    else None
+                )
                 for name, _ in MARKET_INDICES:
                     quote = current_index_quotes.get(name)
                     if name not in index_states:
@@ -683,9 +752,7 @@ def run():
                     breadth_read,
                     highs_lows_read,
                     ma_judgement,
-                )
-                market_context["overall_market"] = overall_market_conclusion(
-                    index_states, current_index_quotes,
+                    market_context.get("nifty_summary_trend"),
                 )
                 market_context["breadth_read"] = breadth_read
                 market_context["highs_lows_read"] = highs_lows_read
@@ -724,6 +791,7 @@ def run():
                     market_context.get("breadth_read"),
                     market_context.get("highs_lows_read"),
                     market_context.get("ma_judgement"),
+                    market_context.get("nifty_summary_trend"),
                 )
                 ep_quote = state["ep_quote"]
                 ep_result = None
@@ -854,11 +922,44 @@ def run():
                 print(f"WebSocket disconnect failed: {exc}")
             pool.shutdown(wait=True, cancel_futures=True)
             if open_summary_sent:
+                closing_index_states = dict(index_states)
+                closing_index_quotes = dict(index_quotes)
+                for name, _ in MARKET_INDICES:
+                    if name in closing_index_states:
+                        continue
+                    key = index_keys.get(name)
+                    if not key:
+                        continue
+                    try:
+                        frame = historical_daily(key, years=2)
+                        state = build_index_state(frame)
+                        if state is not None:
+                            closing_index_states[name] = state
+                    except Exception as exc:
+                        print(f"Closing {name} history retry failed: {exc}")
+                missing_index_keys = [
+                    key for name, key in index_keys.items()
+                    if name not in closing_index_quotes
+                    or closing_index_quotes[name].get("last_price", 0) <= 0
+                ]
+                if missing_index_keys:
+                    try:
+                        missing_keys_by_name = {
+                            name: key for name, key in index_keys.items()
+                            if key in missing_index_keys
+                        }
+                        refreshed_count = refresh_index_quotes(
+                            missing_keys_by_name, index_name_by_key, closing_index_quotes,
+                        )
+                        if refreshed_count == 0:
+                            print("Final index quote fallback returned no usable quotes.")
+                    except Exception as exc:
+                        print(f"Closing index quote snapshot failed: {exc}")
                 send(
                     market_summary(
                         "CLOSE",
-                        index_states,
-                        dict(index_quotes),
+                        closing_index_states,
+                        closing_index_quotes,
                         alert_counts={"buy": len(sent_buy), "ep": len(sent_ep), "ep_orb": len(sent_ep_orb)},
                     )
                 )

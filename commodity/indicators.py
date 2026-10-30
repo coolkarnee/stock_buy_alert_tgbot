@@ -180,6 +180,64 @@ def intraday_signal(candles, daily_direction, commodity=None, tolerance_pct=None
     return None
 
 
+def signal_diagnostic(candles, daily_direction, commodity=None, tolerance_pct=None):
+    """Summarize the latest 30-minute gates when no signal was produced."""
+    required = max(
+        settings.INTRADAY_EMA_SLOW + 1,
+        settings.BREAKOUT_LOOKBACK + 2,
+        settings.ADX_PERIOD * 2,
+    )
+    frame = candles.dropna(subset=["open", "high", "low", "close"]).copy()
+    if len(frame) < required:
+        return f"insufficient completed candles {len(frame)}/{required}"
+    frame = add_emas(add_volatility_and_trend(frame))
+    current = frame.iloc[-1]
+    if pd.isna(current["atr"]) or pd.isna(current["adx"]):
+        return f"indicator warm-up (ATR={current['atr']}, ADX={current['adx']})"
+
+    threshold = settings.ADX_THRESHOLDS.get(commodity, settings.ADX_DEFAULT_THRESHOLD)
+    tolerance = (settings.EMA_TOUCH_TOLERANCE_PCT if tolerance_pct is None else tolerance_pct) / 100
+    ema_floor = max(current["ema10"], current["ema20"])
+    ema_ceiling = min(current["ema10"], current["ema20"])
+    if daily_direction == "long":
+        retest = current["low"] <= ema_floor * (1 + tolerance)
+        confirmed = current["close"] > ema_floor and current["close"] > current["open"]
+        breakout_level = frame["high"].iloc[-settings.BREAKOUT_LOOKBACK - 1:-1].max()
+        breakout = current["close"] > breakout_level and current["close"] > current["open"]
+    elif daily_direction == "short":
+        retest = current["high"] >= ema_ceiling * (1 - tolerance)
+        confirmed = current["close"] < ema_ceiling and current["close"] < current["open"]
+        breakout_level = frame["low"].iloc[-settings.BREAKOUT_LOOKBACK - 1:-1].min()
+        breakout = current["close"] < breakout_level and current["close"] < current["open"]
+    else:
+        long_reversion = (
+            current["low"] <= current["bb_lower"]
+            and current["close"] > current["open"]
+            and current["close"] > frame.iloc[-2]["close"]
+            and current["low"] <= current["ema20"] - settings.MEAN_REVERSION_ATR_MULTIPLIER * current["atr"]
+        )
+        short_reversion = (
+            current["high"] >= current["bb_upper"]
+            and current["close"] < current["open"]
+            and current["close"] < frame.iloc[-2]["close"]
+            and current["high"] >= current["ema20"] + settings.MEAN_REVERSION_ATR_MULTIPLIER * current["atr"]
+        )
+        return (
+            f"daily=neutral mean-reversion long={long_reversion} "
+            f"short={short_reversion}; ADX={current['adx']:.1f} "
+            f"(max {threshold + settings.MEAN_REVERSION_ADX_BUFFER:.1f})"
+        )
+
+    participation, volume_ratio, oi_change, oi_available = _participation_confirmation(current)
+    return (
+        f"daily={daily_direction}; EMA_PULLBACK retest={bool(retest)} "
+        f"confirmed={bool(confirmed)}; VOLATILITY_BREAKOUT ADX={current['adx']:.1f}/"
+        f"{threshold:.1f} breakout={bool(breakout)} participation={bool(participation)} "
+        f"volume_ratio={volume_ratio if pd.notna(volume_ratio) else 'NA'} "
+        f"OI_available={oi_available} OI_change={oi_change if pd.notna(oi_change) else 'NA'}"
+    )
+
+
 def _signal_payload(current, direction, strategy, volume_ratio, oi_change, oi_available):
     return {
         "direction": direction,

@@ -15,6 +15,31 @@ from scanner.market_context import classify_nifty500, market_context
 from scanner.alerts import tradingview_chart_url
 
 
+class MarketSummaryDataTests(unittest.TestCase):
+    def test_rest_refresh_populates_index_quote_for_summary(self):
+        index_keys = {"Nifty": "NSE_INDEX|NIFTY"}
+        index_name_by_key = {"NSE_INDEX|NIFTY": "Nifty"}
+        snapshot = {
+            "last_price": 22000,
+            "volume": 1000,
+            "ohlc": {"open": 21900, "high": 22100, "low": 21850},
+            "timestamp": "2026-10-30T15:10:00+05:30",
+        }
+        with patch.object(
+            live_monitor, "full_market_quotes",
+            return_value={"NSE_INDEX|NIFTY": snapshot},
+        ) as fetch:
+            refreshed = {}
+            count = live_monitor.refresh_index_quotes(
+                index_keys, index_name_by_key, refreshed,
+            )
+
+        fetch.assert_called_once_with(["NSE_INDEX|NIFTY"])
+        self.assertEqual(count, 1)
+        self.assertEqual(refreshed["Nifty"]["last_price"], 22000)
+        self.assertEqual(refreshed["Nifty"]["ohlc"]["open"], 21900)
+
+
 class MomentumTests(unittest.TestCase):
     def setUp(self):
         sector_lookup = patch.object(live_monitor, "get_sector", return_value="Specialty Chemicals")
@@ -102,7 +127,7 @@ class MomentumTests(unittest.TestCase):
 
     def test_all_conditions_buy_without_dry_up(self):
         details = live_monitor.append_market_conclusions(
-            "Market Context: Bear Market\n"
+            "Market Context: Bear\n"
             "NIFTY 500: Downtrending (below EMA10 and EMA20; both falling)\n"
             "Stocks above 200 MA: 30.4% (Broader Bear; 69.6% below 200 MA) | as of 2026-10-23",
             "bear",
@@ -112,7 +137,7 @@ class MomentumTests(unittest.TestCase):
         )
         self.assertEqual(
             live_monitor.alert_market_context(details),
-            "Market Context: Bear Market\n"
+            "Market Context: Bear\n"
             "NIFTY 500: Downtrending (below EMA10 and EMA20; both falling)\n"
             "Stocks above 200 MA: 30.4% (Broader Bear; 69.6% below 200 MA) | as of 2026-10-23\n"
             "Today decliners lead\n"

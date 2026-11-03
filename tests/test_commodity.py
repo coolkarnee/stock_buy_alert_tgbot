@@ -5,7 +5,7 @@ from unittest.mock import patch
 import pandas as pd
 
 from commodity import contracts, indicators
-from commodity.alerts import send_daily
+from commodity.alerts import _chart, send_daily
 from commodity.monitor import completed_30_minute_candles
 from jobs.commodity_performance import evaluate_alert
 
@@ -125,17 +125,32 @@ class SignalTests(unittest.TestCase):
 
 
 class AlertTests(unittest.TestCase):
+    def test_chart_uses_underlying_symbol_for_continuous_mcx_chart(self):
+        self.assertEqual(
+            _chart({"trading_symbol": "SILVERMIC FUT 30 NOV 26"}),
+            "MCX:SILVERMIC",
+        )
+
+    def test_chart_prefers_contract_underlying_symbol(self):
+        self.assertEqual(
+            _chart({
+                "underlying_symbol": "SILVERMIC",
+                "trading_symbol": "SILVERMIC FUT 30 NOV 26",
+            }),
+            "MCX:SILVERMIC",
+        )
+
     @patch("commodity.alerts.record_alert")
     @patch("commodity.alerts.send")
     def test_daily_alert_uses_mcx_chart_link_and_context(self, sender, recorder):
-        send_daily({"trading_symbol": "GOLDTEN26FEB", "expiry": "2026-02-20"}, {
+        send_daily({"trading_symbol": "GOLDTEN FUT 20 FEB 26", "expiry": "2026-02-20"}, {
             "direction": "long", "close": 100, "low": 98, "high": 102,
             "ema10": 99, "ema20": 98,
         })
         sender.assert_called_once()
         self.assertIn("Daily trend: long", sender.call_args.args[0])
         self.assertIn("SL: Rs 98.00", sender.call_args.args[0])
-        self.assertEqual(sender.call_args.kwargs["chart_symbol"], "MCX:GOLDTEN26FEB")
+        self.assertEqual(sender.call_args.kwargs["chart_symbol"], "MCX:GOLDTEN")
 
 
 class CommodityPerformanceTests(unittest.TestCase):

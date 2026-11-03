@@ -1,6 +1,7 @@
 """Commodity-specific alert formatting with existing Telegram delivery."""
 
 import csv
+import re
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -65,8 +66,19 @@ def record_alert(contract, timeframe, direction, context, daily_context=None, st
 
 
 def _chart(contract):
-    symbol = contract.get("trading_symbol") or contract.get("tradingsymbol")
-    return "MCX:" + str(symbol)
+    """Return the continuous MCX TradingView symbol for a futures contract."""
+    symbol = contract.get("underlying_symbol")
+    if not symbol:
+        symbol = contract.get("trading_symbol") or contract.get("tradingsymbol")
+        # Some instrument-master rows omit underlying_symbol but expose the
+        # readable form, e.g. ``SILVERMIC FUT 30 NOV 26``.
+        symbol = re.sub(
+            r"\s+FUT(?:\s+\d{1,2}\s+[A-Z]{3}\s+\d{2,4})?\s*$",
+            "",
+            str(symbol or ""),
+            flags=re.IGNORECASE,
+        )
+    return "MCX:" + str(symbol).strip().upper()
 
 
 def send_daily(contract, context):

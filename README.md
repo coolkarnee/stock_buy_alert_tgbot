@@ -613,7 +613,9 @@ Daily alerts are labelled `COMMODITY DAILY CONTEXT - LONG` or `SHORT` and show
 the contract, expiry, close, EMA10, EMA20, daily trend, and SL. Intraday alerts
 are labelled `COMMODITY 30M LONG ALERT` or `SHORT` and show entry, EMA values,
 daily context, SL, SL percentage, and candle time. Each message receives an
-MCX TradingView chart button.
+MCX TradingView chart button. The button uses the continuous underlying symbol
+rather than the expiring futures contract—for example, `SILVERMIC FUT 30 NOV
+26` opens `MCX:SILVERMIC`.
 
 ### Combined performance artifacts
 

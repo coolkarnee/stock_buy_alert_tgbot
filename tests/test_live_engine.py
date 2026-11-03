@@ -16,6 +16,45 @@ from scanner.alerts import tradingview_chart_url
 
 
 class MarketSummaryDataTests(unittest.TestCase):
+    def test_regime_transition_marks_improvement_and_worsening(self):
+        self.assertEqual(live_monitor.regime_transition("Bear", "Chop"), "Bear → Chop (improved)")
+        self.assertEqual(live_monitor.regime_transition("Chop", "Bull"), "Chop → Bull (improved)")
+        self.assertEqual(live_monitor.regime_transition("Bull", "Chop"), "Bull → Chop (worsened)")
+        self.assertEqual(live_monitor.regime_transition("Chop", "Bear"), "Chop → Bear (worsened)")
+
+    def test_close_summary_covers_index_and_overall_transitions(self):
+        state = {
+            "ema10": 100, "ema20": 100, "prev_ema10": 99, "prev_ema20": 99,
+            "prev_close": 100,
+        }
+        quotes = {"Nifty": {"last_price": 101}}
+        summary = live_monitor.market_summary(
+            "CLOSE", {"Nifty": state}, quotes,
+            opening_regimes={"Nifty": "Bear"}, opening_overall="bear",
+            previous_regimes={"Nifty": "Chop", "overall_market": "chop"},
+        )
+        self.assertIn("Nifty +1.00% Bull", summary)
+        self.assertIn("Open → close: Bear → Bull (improved)", summary)
+        self.assertIn("Yesterday close → close: Chop → Bull (improved)", summary)
+        self.assertIn("Overall market: bull", summary)
+
+    def test_regime_snapshot_persists_for_next_day_comparison(self):
+        state = {
+            "ema10": 100, "ema20": 100, "prev_ema10": 99, "prev_ema20": 99,
+            "prev_close": 100,
+        }
+        quotes = {"Nifty": {"last_price": 101}}
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "market_regimes.csv"
+            live_monitor.save_regime_snapshot(
+                datetime(2026, 11, 3).date(), {"Nifty": state}, quotes, path,
+            )
+            previous = live_monitor.load_previous_regime_snapshot(
+                datetime(2026, 11, 4).date(), path,
+            )
+        self.assertEqual(previous["Nifty"], "Bull")
+        self.assertEqual(previous["overall_market"], "bull")
+
     def test_rest_refresh_populates_index_quote_for_summary(self):
         index_keys = {"Nifty": "NSE_INDEX|NIFTY"}
         index_name_by_key = {"NSE_INDEX|NIFTY": "Nifty"}
@@ -576,6 +615,7 @@ class MomentumTests(unittest.TestCase):
 
         with (TemporaryDirectory() as history_directory,
               patch.object(live_monitor, "SIGNAL_HISTORY_FILE", Path(history_directory) / "history.csv"),
+              patch.object(live_monitor, "REGIME_HISTORY_FILE", Path(history_directory) / "market_regimes.csv"),
               patch.object(live_monitor, "datetime", Clock),
               patch.object(live_engine, "datetime", Clock),
               patch.object(live_monitor.time, "sleep", side_effect=advance),

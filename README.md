@@ -281,6 +281,16 @@ EP-radar regressions in `tests/test_ep_radar.py` cover both configured modes, st
 
 EMA10/EMA21 extension is shown in alerts but is not a blocking filter by default. Set `LIVE_BLOCK_EXTENDED=True` to require at most 10% above EMA10 and 20% above EMA21. Prior three-session average volume below the preceding 20-session average is informational only and never blocks a BUY. The combined market context is informational and never blocks alerts. For live BUY alerts, NIFTY 500 is Uptrending only when above both live EMA10 and EMA20 with both rising, Downtrending only when below both with both falling, and Chopping otherwise. TradingView's stocks-above-200-day-MA percentage is Broader Bull above 50% and Broader Bear at or below 50%; <=20% adds Oversold and >=80% adds Overbought. Matching bullish/bearish readings yield Bull/Bear Market, disagreement yields Mixed Market, and unavailable readings show NA with the other available value retained.
 
+The close summary evaluates the same regime transitions for every tracked index and
+for the overall multi-index market. It compares today's CLOSE with both the same
+session's OPEN and the previous trading session's CLOSE. A move from `Bear` to
+`Chop` or from `Chop` to `Bull` is labelled **improved**; a move from `Bull` to
+`Chop` or from `Chop` to `Bear` is labelled **worsened**. Direct `Bear` to `Bull`
+and `Bull` to `Bear` moves use the same improved/worsened direction. The close
+regime snapshot is persisted in `artifacts/market_regimes.csv` so the next run
+can report the day-over-day comparison. Unchanged or unavailable baselines are
+shown as such and do not receive an improvement/worsening label.
+
 Market-summary indexes are matched in the Upstox instrument master on either `trading_symbol` or `name` (normalized to uppercase alphanumerics), because some indexes differ between the two fields; for example Nifty 50 has `trading_symbol` `NIFTY` and `name` `Nifty 50`.
 
 RVOL projects cumulative volume to a 375-minute session using elapsed session time and the preceding 20-session average. Turnover uses actual cumulative volume, not projected volume. Live EMA and ATR incorporate the developing daily candle, so they may change before the close.

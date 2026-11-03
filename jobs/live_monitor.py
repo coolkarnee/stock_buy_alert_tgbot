@@ -43,6 +43,77 @@ MARKET_INDICES = (
 
 MARKET_CONTEXT_DELAY = timedelta(minutes=20)
 CLOSING_INDEX_REFRESH_BEFORE = timedelta(minutes=10)
+REGIME_HISTORY_FILE = Path("artifacts/market_regimes.csv")
+REGIME_NAMES = tuple(name for name, _ in MARKET_INDICES)
+REGIME_RANK = {"Bear": 0, "Chop": 1, "Bull": 2}
+
+
+def index_regimes(index_states, index_quotes):
+    """Return the classified regime for each index with usable close data."""
+    return {
+        name: classify_index(index_states[name], index_quotes[name])[0]
+        for name in REGIME_NAMES
+        if name in index_states and name in index_quotes
+        and index_quotes[name].get("last_price", 0) > 0
+    }
+
+
+def regime_transition(previous, current):
+    """Describe a Bull/Chop/Bear transition as improved or worsened."""
+    previous = str(previous or "").title()
+    current = str(current or "").title()
+    if previous not in REGIME_RANK or current not in REGIME_RANK or previous == current:
+        return None
+    direction = "improved" if REGIME_RANK[current] > REGIME_RANK[previous] else "worsened"
+    return f"{previous} → {current} ({direction})"
+
+
+def _transition_details(current, opening=None, previous_close=None):
+    details = []
+    if opening:
+        transition = regime_transition(opening, current)
+        details.append(f"Open → close: {transition or 'unchanged'}")
+    if previous_close:
+        transition = regime_transition(previous_close, current)
+        details.append(f"Yesterday close → close: {transition or 'unchanged'}")
+    return details
+
+
+def load_previous_regime_snapshot(today, path=None):
+    """Load the most recent persisted regime snapshot before today."""
+    path = path or REGIME_HISTORY_FILE
+    try:
+        with path.open(newline="", encoding="utf-8") as handle:
+            rows = list(csv.DictReader(handle))
+    except (FileNotFoundError, OSError, csv.Error):
+        return {}
+    prior = [row for row in rows if row.get("date", "") < today.isoformat()]
+    return prior[-1] if prior else {}
+
+
+def save_regime_snapshot(today, index_states, index_quotes, path=None):
+    """Persist today's close regimes for the next session's comparison."""
+    path = path or REGIME_HISTORY_FILE
+    regimes = index_regimes(index_states, index_quotes)
+    if not regimes:
+        return
+    fields = ["date", "overall_market", *REGIME_NAMES]
+    try:
+        with path.open(newline="", encoding="utf-8") as handle:
+            rows = list(csv.DictReader(handle))
+    except (FileNotFoundError, OSError, csv.Error):
+        rows = []
+    rows = [row for row in rows if row.get("date") != today.isoformat()]
+    row = {field: "" for field in fields}
+    row.update({"date": today.isoformat(), **regimes})
+    row["overall_market"] = overall_market_conclusion(index_states, index_quotes) or ""
+    rows.append(row)
+    rows.sort(key=lambda item: item.get("date", ""))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(rows)
 
 
 def overall_market_conclusion(index_states, index_quotes):
@@ -243,7 +314,8 @@ def refresh_index_quotes(index_keys, index_name_by_key, target_quotes):
     return refreshed
 
 
-def market_summary(phase, index_states, index_quotes, previous_conclusion=None, alert_counts=None):
+def market_summary(phase, index_states, index_quotes, previous_conclusion=None, alert_counts=None,
+                   opening_regimes=None, opening_overall=None, previous_regimes=None):
     lines = [f"📈 MARKET {phase} SUMMARY", ""]
     regimes = []
     for name, _ in MARKET_INDICES:
@@ -254,7 +326,13 @@ def market_summary(phase, index_states, index_quotes, previous_conclusion=None, 
             continue
         regime, _ = classify_index(state, quote)
         move = (quote["last_price"] / state["prev_close"] - 1) * 100
-        lines.append(f"{name} {move:+.2f}% {regime} |")
+        transition = _transition_details(
+            regime,
+            (opening_regimes or {}).get(name),
+            (previous_regimes or {}).get(name),
+        )
+        suffix = f" {' | '.join(transition)}" if transition else ""
+        lines.append(f"{name} {move:+.2f}% {regime}{suffix} |")
         regimes.append(regime)
 
     if len(regimes) < len(MARKET_INDICES):
@@ -262,7 +340,12 @@ def market_summary(phase, index_states, index_quotes, previous_conclusion=None, 
 
     if regimes:
         overall = overall_market_conclusion(index_states, index_quotes)
-        lines.extend(["", f"Overall market: {overall}"])
+        transition = _transition_details(
+            overall.title(), opening_overall,
+            (previous_regimes or {}).get("overall_market"),
+        )
+        suffix = f" {' | '.join(transition)}" if transition else ""
+        lines.extend(["", f"Overall market: {overall}{suffix}"])
     else:
         lines.extend(["", "Overall market: unavailable"])
     if previous_conclusion:
@@ -720,6 +803,12 @@ def run():
                         previous_conclusion=prior_performance_conclusion(),
                     )
                 )
+                market_context["open_index_regimes"] = index_regimes(
+                    index_states, current_index_quotes,
+                )
+                market_context["open_overall_market"] = overall_market_conclusion(
+                    index_states, current_index_quotes,
+                )
                 try:
                     breadth = send_breadth_alerts(datetime.now(IST).date()) or {}
                     market_context["stocks_above_200ma"] = breadth.get("200-day MA")
@@ -955,14 +1044,20 @@ def run():
                             print("Final index quote fallback returned no usable quotes.")
                     except Exception as exc:
                         print(f"Closing index quote snapshot failed: {exc}")
+                close_date = datetime.now(IST).date()
+                previous_regimes = load_previous_regime_snapshot(close_date)
                 send(
                     market_summary(
                         "CLOSE",
                         closing_index_states,
                         closing_index_quotes,
                         alert_counts={"buy": len(sent_buy), "ep": len(sent_ep), "ep_orb": len(sent_ep_orb)},
+                        opening_regimes=market_context.get("open_index_regimes"),
+                        opening_overall=market_context.get("open_overall_market"),
+                        previous_regimes=previous_regimes,
                     )
                 )
+                save_regime_snapshot(close_date, closing_index_states, closing_index_quotes)
             else:
                 print("NSE live scanner stopped before a complete market summary was available.")
         finally:
